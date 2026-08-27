@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/gorilla/websocket"
 	_ "github.com/jackc/pgx/v5/stdlib"
 )
@@ -21,9 +22,34 @@ import (
 var htmlContent embed.FS
 
 // ----------------------------
-// PART 1: DATABASE SETUP
+// JWT Configuration
 // ----------------------------
+var jwtSecret = []byte(os.Getenv("JWT_SECRET"))
 
+// If no JWT_SECRET is set, use a default (for development only).
+func init() {
+	if len(jwtSecret) == 0 {
+		// Default secret (never use in production)
+		jwtSecret = []byte("default-secret-change-me")
+		log.Println("⚠️  WARNING: Using default JWT_SECRET. Set it in environment.")
+	}
+}
+
+// Claims structure for JWT.
+type Claims struct {
+	Username string `json:"username"`
+	jwt.RegisteredClaims
+}
+
+// Hardcoded user for demo (username: admin, password: password123)
+// In production, this should be fetched from a database.
+var validUsers = map[string]string{
+	"admin": "password123",
+}
+
+// ----------------------------
+// Database setup (same as before)
+// ----------------------------
 func initDB(db *sql.DB) error {
 	itemsTable := `
 	CREATE TABLE IF NOT EXISTS items (
@@ -79,9 +105,8 @@ func seedItems(db *sql.DB) error {
 }
 
 // ----------------------------
-// PART 2: INVENTORY MODULE
+// Inventory Module
 // ----------------------------
-
 type InventoryDB struct {
 	db *sql.DB
 }
@@ -202,9 +227,8 @@ func (inv *InventoryDB) DisplayAllItems() {
 }
 
 // ----------------------------
-// PART 3: PROCUREMENT MODULE
+// Procurement Module
 // ----------------------------
-
 type PurchaseOrder struct {
 	ID         string    `json:"id"`
 	ItemID     string    `json:"item_id"`
@@ -341,9 +365,8 @@ func (ps *ProcurementDB) ReceiveOrder(orderID string) error {
 }
 
 // ----------------------------
-// PART 4: PREDICTIVE MAINTENANCE
+// Predictive Maintenance
 // ----------------------------
-
 type Equipment struct {
 	ID          string
 	Name        string
@@ -394,9 +417,8 @@ func monitorEquipment(equip Equipment, alertChannel chan MaintenanceAlert) {
 }
 
 // ----------------------------
-// PART 5: WEBSOCKET HUB
+// WebSocket Hub
 // ----------------------------
-
 var (
 	clients   = make(map[*websocket.Conn]bool)
 	broadcast = make(chan MaintenanceAlert)
@@ -455,9 +477,8 @@ func broadcastAlerts() {
 }
 
 // ----------------------------
-// PART 6: REST API HANDLERS
+// REST API Handlers with Authentication
 // ----------------------------
-
 type Item struct {
 	ID           string `json:"id"`
 	Name         string `json:"name"`
@@ -473,6 +494,84 @@ type ErrorResponse struct {
 	Error string `json:"error"`
 }
 
+// ---- Login handler ----
+func handleLogin(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var creds struct {
+		Username string `json:"username"`
+		Password string `json:"password"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&creds); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	// Validate credentials.
+	expectedPassword, ok := validUsers[creds.Username]
+	if !ok || expectedPassword != creds.Password {
+		http.Error(w, "Invalid username or password", http.StatusUnauthorized)
+		return
+	}
+
+	// Create JWT token.
+	expirationTime := time.Now().Add(24 * time.Hour)
+	claims := &Claims{
+		Username: creds.Username,
+		RegisteredClaims: jwt.RegisteredClaims{
+			ExpiresAt: jwt.NewNumericDate(expirationTime),
+			IssuedAt:  jwt.NewNumericDate(time.Now()),
+		},
+	}
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	tokenString, err := token.SignedString(jwtSecret)
+	if err != nil {
+		http.Error(w, "Failed to generate token", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"token": tokenString})
+}
+
+// ---- Auth Middleware ----
+func authMiddleware(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		// Get the Authorization header.
+		authHeader := r.Header.Get("Authorization")
+		if authHeader == "" {
+			http.Error(w, "Authorization header required", http.StatusUnauthorized)
+			return
+		}
+
+		// Expect "Bearer <token>"
+		parts := strings.Split(authHeader, " ")
+		if len(parts) != 2 || strings.ToLower(parts[0]) != "bearer" {
+			http.Error(w, "Invalid Authorization format", http.StatusUnauthorized)
+			return
+		}
+		tokenString := parts[1]
+
+		// Parse and validate the token.
+		claims := &Claims{}
+		token, err := jwt.ParseWithClaims(tokenString, claims, func(token *jwt.Token) (interface{}, error) {
+			return jwtSecret, nil
+		})
+		if err != nil || !token.Valid {
+			http.Error(w, "Invalid or expired token", http.StatusUnauthorized)
+			return
+		}
+
+		// Optionally, you can pass the username to the handler via context.
+		// For simplicity, we just proceed.
+		next(w, r)
+	}
+}
+
+// ---- API handlers (some protected) ----
 func handleGetItems(inv *InventoryDB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		items, err := inv.GetAllItems()
@@ -512,8 +611,9 @@ func handleGetItem(inv *InventoryDB) http.HandlerFunc {
 	}
 }
 
+// PROTECTED: adjust stock requires authentication.
 func handleAdjustStock(inv *InventoryDB, orderChan chan PurchaseOrder) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
+	return authMiddleware(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			w.WriteHeader(http.StatusMethodNotAllowed)
 			json.NewEncoder(w).Encode(ErrorResponse{Error: "Method not allowed"})
@@ -545,7 +645,7 @@ func handleAdjustStock(inv *InventoryDB, orderChan chan PurchaseOrder) http.Hand
 		item, _ := inv.GetItemByID(id)
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(item)
-	}
+	})
 }
 
 func handleGetOrders(proc *ProcurementDB) http.HandlerFunc {
@@ -561,8 +661,9 @@ func handleGetOrders(proc *ProcurementDB) http.HandlerFunc {
 	}
 }
 
+// PROTECTED: receive order requires authentication.
 func handleReceiveOrder(proc *ProcurementDB) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
+	return authMiddleware(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			w.WriteHeader(http.StatusMethodNotAllowed)
 			json.NewEncoder(w).Encode(ErrorResponse{Error: "Method not allowed"})
@@ -587,20 +688,17 @@ func handleReceiveOrder(proc *ProcurementDB) http.HandlerFunc {
 		order, _ := proc.GetOrderByID(orderID)
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(order)
-	}
+	})
 }
 
 // ----------------------------
-// PART 7: MAIN
+// Main
 // ----------------------------
-
 func main() {
 	rand.Seed(time.Now().UnixNano())
 
-	// Get database connection string from environment (for Docker) or use default.
 	connStr := os.Getenv("DATABASE_URL")
 	if connStr == "" {
-		// Fallback for local development
 		connStr = "postgres://aegis_user:aegis123@localhost:5432/aegislog?sslmode=disable"
 	}
 
@@ -626,6 +724,7 @@ func main() {
 	procurement := NewProcurementDB(db, orderChannel)
 	inventory := &InventoryDB{db: db}
 
+	// Start maintenance monitors.
 	alertChannel := make(chan MaintenanceAlert)
 	equipmentList := []Equipment{
 		{ID: "GEN-001", Name: "Diesel Generator", HealthScore: 85},
@@ -657,18 +756,10 @@ func main() {
 			} else {
 				fmt.Println("❌ Failed to consume stock.")
 			}
-
-			orders, _ := procurement.GetRecentOrders(5)
-			if len(orders) > 0 {
-				fmt.Printf("📋 [PROCUREMENT] Recent Orders:\n")
-				for _, o := range orders {
-					fmt.Printf("   - %s | %s | Qty: %d | Status: %s\n", o.ID, o.ItemName, o.Quantity, o.Status)
-				}
-			}
 		}
 	}()
 
-	// HTTP Routes.
+	// Setup HTTP routes.
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		htmlFile, err := htmlContent.ReadFile("index.html")
 		if err != nil {
@@ -680,23 +771,26 @@ func main() {
 	})
 	http.HandleFunc("/ws", handleWebSocket)
 
-	// REST API Routes.
+	// Login endpoint (public)
+	http.HandleFunc("/api/login", handleLogin)
+
+	// Public GET endpoints (no auth required)
 	http.HandleFunc("GET /api/items", handleGetItems(inventory))
 	http.HandleFunc("GET /api/items/{id}", handleGetItem(inventory))
-	http.HandleFunc("POST /api/items/{id}/adjust", handleAdjustStock(inventory, orderChannel))
 	http.HandleFunc("GET /api/orders", handleGetOrders(procurement))
+
+	// Protected POST endpoints (require auth)
+	http.HandleFunc("POST /api/items/{id}/adjust", handleAdjustStock(inventory, orderChannel))
 	http.HandleFunc("POST /api/orders/{id}/receive", handleReceiveOrder(procurement))
 
-	port := ":8080"
-	fmt.Printf("\n🚀 AegisLog Web Server running at http://localhost%s\n", port)
-	fmt.Println("📲 WebSocket alerts: ws://localhost:8080/ws")
-	fmt.Println("📡 REST API endpoints:")
-	fmt.Println("   GET  /api/items")
-	fmt.Println("   GET  /api/items/{id}")
-	fmt.Println("   POST /api/items/{id}/adjust")
-	fmt.Println("   GET  /api/orders")
-	fmt.Println("   POST /api/orders/{id}/receive")
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8080"
+	}
+	fmt.Printf("\n🚀 AegisLog Web Server running at http://localhost:%s\n", port)
+	fmt.Println("📲 WebSocket alerts: ws://localhost/ws")
+	fmt.Println("🔒 Authentication enabled. Login at /api/login")
 	fmt.Println("Press Ctrl+C to stop.\n")
 
-	log.Fatal(http.ListenAndServe(port, nil))
+	log.Fatal(http.ListenAndServe(":"+port, nil))
 }

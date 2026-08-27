@@ -17,6 +17,13 @@
             font-family: 'Courier New', monospace;
             padding: 20px;
             min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+        .container {
+            width: 100%;
+            max-width: 1200px;
         }
         .header {
             border-bottom: 2px solid #ff6a00;
@@ -107,34 +114,6 @@
             margin-top: 20px;
             font-size: 18px;
         }
-        /* Scrollbar styling */
-        .alert-container::-webkit-scrollbar,
-        .orders-container::-webkit-scrollbar {
-            width: 8px;
-        }
-        .alert-container::-webkit-scrollbar-track,
-        .orders-container::-webkit-scrollbar-track {
-            background: #1a1a1a;
-        }
-        .alert-container::-webkit-scrollbar-thumb,
-        .orders-container::-webkit-scrollbar-thumb {
-            background: #444;
-            border-radius: 4px;
-        }
-        .alert-container::-webkit-scrollbar-thumb:hover,
-        .orders-container::-webkit-scrollbar-thumb:hover {
-            background: #ff6a00;
-        }
-        .footer {
-            margin-top: 30px;
-            border-top: 1px solid #222;
-            padding-top: 15px;
-            font-size: 12px;
-            color: #444;
-            text-align: center;
-        }
-
-        /* --- NEW: Orders Table Styles --- */
         .orders-container {
             max-height: 40vh;
             overflow-y: auto;
@@ -202,67 +181,221 @@
             color: #ffa500;
             border: 1px solid #ffa500;
         }
+        .footer {
+            margin-top: 30px;
+            border-top: 1px solid #222;
+            padding-top: 15px;
+            font-size: 12px;
+            color: #444;
+            text-align: center;
+        }
+        /* Login form styles */
+        #loginForm {
+            background: #141414;
+            border: 1px solid #333;
+            border-radius: 8px;
+            padding: 30px;
+            max-width: 400px;
+            margin: 40px auto;
+        }
+        #loginForm h2 {
+            color: #ff6a00;
+            margin-bottom: 20px;
+        }
+        #loginForm label {
+            display: block;
+            margin-top: 10px;
+            color: #aaa;
+        }
+        #loginForm input {
+            width: 100%;
+            padding: 10px;
+            background: #0a0a0a;
+            border: 1px solid #333;
+            color: #e0e0e0;
+            border-radius: 4px;
+            margin-top: 5px;
+            font-family: inherit;
+        }
+        #loginForm button {
+            margin-top: 20px;
+            width: 100%;
+            padding: 10px;
+            background-color: #ff6a00;
+            color: #0a0a0a;
+            border: none;
+            border-radius: 4px;
+            font-weight: bold;
+            font-size: 16px;
+            cursor: pointer;
+        }
+        #loginForm button:hover {
+            background-color: #ff8533;
+        }
+        #loginError {
+            color: #ff1744;
+            margin-top: 10px;
+            text-align: center;
+        }
+        .logout-btn {
+            background: none;
+            border: 1px solid #555;
+            color: #888;
+            padding: 4px 12px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-family: inherit;
+        }
+        .logout-btn:hover {
+            color: #ff6a00;
+            border-color: #ff6a00;
+        }
     </style>
 </head>
 <body>
-    <div class="header">
-        <h1>⚙️ AEGISLOG</h1>
-        <div class="status">● LIVE PREDICTIVE MAINTENANCE</div>
-    </div>
+    <div class="container" id="app">
+        <!-- Login Section (hidden when logged in) -->
+        <div id="loginSection">
+            <div id="loginForm">
+                <h2>🔐 AegisLog Login</h2>
+                <label>Username</label>
+                <input type="text" id="username" placeholder="admin" value="admin">
+                <label>Password</label>
+                <input type="password" id="password" placeholder="password123" value="password123">
+                <button onclick="login()">Sign In</button>
+                <div id="loginError"></div>
+            </div>
+        </div>
 
-    <!-- Alerts Section -->
-    <div class="section-title">🚨 MAINTENANCE ALERTS</div>
-    <div id="alertContainer" class="alert-container">
-        <div class="empty-state">⏳ Waiting for equipment alerts...</div>
-    </div>
+        <!-- Dashboard (hidden when not logged in) -->
+        <div id="dashboardSection" style="display:none;">
+            <div class="header">
+                <h1>⚙️ AEGISLOG</h1>
+                <div>
+                    <span class="status">● LIVE PREDICTIVE MAINTENANCE</span>
+                    <button class="logout-btn" onclick="logout()">Logout</button>
+                </div>
+            </div>
 
-    <!-- Orders Section (NEW) -->
-    <div class="section-title">📦 PURCHASE ORDERS</div>
-    <div id="ordersContainer" class="orders-container">
-        <div class="empty-state">⏳ Loading orders...</div>
-    </div>
+            <!-- Alerts Section -->
+            <div class="section-title">🚨 MAINTENANCE ALERTS</div>
+            <div id="alertContainer" class="alert-container">
+                <div class="empty-state">⏳ Waiting for equipment alerts...</div>
+            </div>
 
-    <div class="footer">
-        <span>Classified: Military-Grade Logistics | Real-Time Anomaly Detection</span>
+            <!-- Orders Section -->
+            <div class="section-title">📦 PURCHASE ORDERS</div>
+            <div id="ordersContainer" class="orders-container">
+                <div class="empty-state">⏳ Loading orders...</div>
+            </div>
+
+            <div class="footer">
+                <span>Classified: Military-Grade Logistics | Real-Time Anomaly Detection</span>
+            </div>
+        </div>
     </div>
 
     <script>
-        const container = document.getElementById('alertContainer');
+        // Global token variable
+        let token = localStorage.getItem('aegislog_token');
+
+        // DOM elements
+        const loginSection = document.getElementById('loginSection');
+        const dashboardSection = document.getElementById('dashboardSection');
+        const alertContainer = document.getElementById('alertContainer');
         const ordersContainer = document.getElementById('ordersContainer');
 
-        // ----------------------------
-        // WebSocket for Alerts
-        // ----------------------------
-        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-        const ws = new WebSocket(`${protocol}//${window.location.host}/ws`);
+        // Check if user is already logged in
+        if (token) {
+            showDashboard();
+        } else {
+            loginSection.style.display = 'block';
+            dashboardSection.style.display = 'none';
+        }
 
-        ws.onopen = function() {
-            console.log('WebSocket connected.');
-            container.innerHTML = '';
-        };
+        // Login function
+        function login() {
+            const username = document.getElementById('username').value;
+            const password = document.getElementById('password').value;
+            const errorEl = document.getElementById('loginError');
 
-        ws.onmessage = function(event) {
-            try {
-                const alert = JSON.parse(event.data);
-                renderAlert(alert);
-                // When an alert comes in, also refresh orders (in case a reorder was triggered).
-                loadOrders();
-            } catch (e) {
-                console.error('Failed to parse alert:', e);
-            }
-        };
+            fetch('/api/login', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ username, password })
+            })
+            .then(response => {
+                if (!response.ok) {
+                    return response.text().then(text => { throw new Error(text || 'Login failed'); });
+                }
+                return response.json();
+            })
+            .then(data => {
+                if (data.token) {
+                    token = data.token;
+                    localStorage.setItem('aegislog_token', token);
+                    showDashboard();
+                } else {
+                    errorEl.textContent = 'Invalid response from server.';
+                }
+            })
+            .catch(err => {
+                errorEl.textContent = err.message || 'Login failed. Check credentials.';
+            });
+        }
 
-        ws.onerror = function(err) {
-            console.error('WebSocket error:', err);
-            container.innerHTML = `<div style="color:#ff1744; padding:20px; text-align:center;">⚠️ Connection lost to server. Refresh the page.</div>`;
-        };
+        // Logout function
+        function logout() {
+            localStorage.removeItem('aegislog_token');
+            token = null;
+            loginSection.style.display = 'block';
+            dashboardSection.style.display = 'none';
+            location.reload(); // Reset state
+        }
 
-        ws.onclose = function() {
-            console.log('WebSocket closed.');
-        };
+        // Show dashboard, connect WebSocket, load orders, etc.
+        function showDashboard() {
+            loginSection.style.display = 'none';
+            dashboardSection.style.display = 'block';
+            initializeWebSocket();
+            loadOrders();
+            // Refresh orders every 30 seconds
+            setInterval(loadOrders, 30000);
+        }
+
+        // WebSocket for alerts (no auth needed for alerts)
+        function initializeWebSocket() {
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const ws = new WebSocket(`${protocol}//${window.location.host}/ws`);
+
+            ws.onopen = function() {
+                console.log('WebSocket connected.');
+                alertContainer.innerHTML = '';
+            };
+
+            ws.onmessage = function(event) {
+                try {
+                    const alert = JSON.parse(event.data);
+                    renderAlert(alert);
+                    // When an alert comes in, also refresh orders (in case a reorder was triggered).
+                    loadOrders();
+                } catch (e) {
+                    console.error('Failed to parse alert:', e);
+                }
+            };
+
+            ws.onerror = function(err) {
+                console.error('WebSocket error:', err);
+                alertContainer.innerHTML = `<div style="color:#ff1744; padding:20px; text-align:center;">⚠️ Connection lost to server. Refresh the page.</div>`;
+            };
+
+            ws.onclose = function() {
+                console.log('WebSocket closed.');
+            };
+        }
 
         function renderAlert(alert) {
-            const emptyState = container.querySelector('.empty-state');
+            const emptyState = alertContainer.querySelector('.empty-state');
             if (emptyState) emptyState.remove();
 
             const card = document.createElement('div');
@@ -288,26 +421,26 @@
 
             card.appendChild(msgDiv);
             card.appendChild(metaDiv);
-            container.prepend(card);
+            alertContainer.prepend(card);
 
-            while (container.children.length > 50) {
-                container.removeChild(container.lastChild);
+            while (alertContainer.children.length > 50) {
+                alertContainer.removeChild(alertContainer.lastChild);
             }
         }
 
-        // ----------------------------
-        // Orders Functions (NEW)
-        // ----------------------------
+        // ----- Orders Functions (with token) -----
         function loadOrders() {
-            fetch('/api/orders')
-                .then(response => response.json())
-                .then(orders => {
-                    renderOrders(orders);
-                })
-                .catch(err => {
-                    console.error('Failed to load orders:', err);
-                    ordersContainer.innerHTML = `<div class="empty-state">❌ Failed to load orders.</div>`;
-                });
+            fetch('/api/orders', {
+                headers: { 'Authorization': `Bearer ${token}` }
+            })
+            .then(response => response.json())
+            .then(orders => {
+                renderOrders(orders);
+            })
+            .catch(err => {
+                console.error('Failed to load orders:', err);
+                ordersContainer.innerHTML = `<div class="empty-state">❌ Failed to load orders.</div>`;
+            });
         }
 
         function renderOrders(orders) {
@@ -359,20 +492,22 @@
         }
 
         function receiveOrder(orderId) {
-            // Disable the button to prevent double-clicks
+            // Disable buttons to prevent double-clicks
             const buttons = document.querySelectorAll('.btn-receive');
             buttons.forEach(btn => btn.disabled = true);
 
             fetch(`/api/orders/${orderId}/receive`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' }
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${token}`
+                }
             })
             .then(response => response.json())
             .then(data => {
                 console.log('Order received:', data);
-                // Reload orders to reflect the change
-                loadOrders();
-                // Also reload inventory/stock display if we had one
+                loadOrders(); // Refresh orders
+                // Also maybe refresh items if we had a stock display
             })
             .catch(err => {
                 console.error('Failed to receive order:', err);
@@ -382,15 +517,6 @@
                 btns.forEach(btn => btn.disabled = false);
             });
         }
-
-        // ----------------------------
-        // Initial Load
-        // ----------------------------
-        // Load orders on page load.
-        loadOrders();
-
-        // Optional: Refresh orders every 30 seconds to catch new ones without WebSocket triggers.
-        setInterval(loadOrders, 30000);
     </script>
 </body>
 </html>
