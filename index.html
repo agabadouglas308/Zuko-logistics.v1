@@ -25,6 +25,8 @@
             display: flex;
             justify-content: space-between;
             align-items: center;
+            flex-wrap: wrap;
+            gap: 10px;
         }
         .header h1 {
             color: #ff6a00;
@@ -39,13 +41,21 @@
             border: 1px solid #4caf50;
             border-radius: 4px;
         }
+        .section-title {
+            color: #ff6a00;
+            font-size: 20px;
+            margin: 20px 0 10px 0;
+            border-bottom: 1px solid #333;
+            padding-bottom: 5px;
+        }
         .alert-container {
             display: flex;
             flex-direction: column;
             gap: 10px;
-            max-height: 80vh;
+            max-height: 40vh;
             overflow-y: auto;
             padding-right: 10px;
+            margin-bottom: 20px;
         }
         .alert-card {
             background: #141414;
@@ -94,21 +104,25 @@
         .empty-state {
             color: #555;
             text-align: center;
-            margin-top: 60px;
+            margin-top: 20px;
             font-size: 18px;
         }
         /* Scrollbar styling */
-        .alert-container::-webkit-scrollbar {
+        .alert-container::-webkit-scrollbar,
+        .orders-container::-webkit-scrollbar {
             width: 8px;
         }
-        .alert-container::-webkit-scrollbar-track {
+        .alert-container::-webkit-scrollbar-track,
+        .orders-container::-webkit-scrollbar-track {
             background: #1a1a1a;
         }
-        .alert-container::-webkit-scrollbar-thumb {
+        .alert-container::-webkit-scrollbar-thumb,
+        .orders-container::-webkit-scrollbar-thumb {
             background: #444;
             border-radius: 4px;
         }
-        .alert-container::-webkit-scrollbar-thumb:hover {
+        .alert-container::-webkit-scrollbar-thumb:hover,
+        .orders-container::-webkit-scrollbar-thumb:hover {
             background: #ff6a00;
         }
         .footer {
@@ -119,6 +133,75 @@
             color: #444;
             text-align: center;
         }
+
+        /* --- NEW: Orders Table Styles --- */
+        .orders-container {
+            max-height: 40vh;
+            overflow-y: auto;
+            margin-top: 10px;
+        }
+        .order-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 14px;
+        }
+        .order-table th {
+            text-align: left;
+            padding: 10px 8px;
+            background-color: #1a1a1a;
+            color: #ff6a00;
+            border-bottom: 2px solid #ff6a00;
+            position: sticky;
+            top: 0;
+            z-index: 10;
+        }
+        .order-table td {
+            padding: 10px 8px;
+            border-bottom: 1px solid #222;
+        }
+        .order-table tr:hover {
+            background-color: #141414;
+        }
+        .btn-receive {
+            background-color: #1a4a1a;
+            color: #4caf50;
+            border: 1px solid #4caf50;
+            padding: 5px 15px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-family: inherit;
+            font-size: 13px;
+            transition: all 0.2s;
+        }
+        .btn-receive:hover {
+            background-color: #4caf50;
+            color: #0a0a0a;
+        }
+        .btn-receive:disabled {
+            opacity: 0.4;
+            cursor: not-allowed;
+            background-color: #222;
+            border-color: #555;
+            color: #555;
+        }
+        .status-badge {
+            padding: 2px 10px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: bold;
+        }
+        .status-badge.approved {
+            color: #4caf50;
+            border: 1px solid #4caf50;
+        }
+        .status-badge.received {
+            color: #888;
+            border: 1px solid #888;
+        }
+        .status-badge.pending {
+            color: #ffa500;
+            border: 1px solid #ffa500;
+        }
     </style>
 </head>
 <body>
@@ -127,8 +210,16 @@
         <div class="status">● LIVE PREDICTIVE MAINTENANCE</div>
     </div>
 
+    <!-- Alerts Section -->
+    <div class="section-title">🚨 MAINTENANCE ALERTS</div>
     <div id="alertContainer" class="alert-container">
         <div class="empty-state">⏳ Waiting for equipment alerts...</div>
+    </div>
+
+    <!-- Orders Section (NEW) -->
+    <div class="section-title">📦 PURCHASE ORDERS</div>
+    <div id="ordersContainer" class="orders-container">
+        <div class="empty-state">⏳ Loading orders...</div>
     </div>
 
     <div class="footer">
@@ -137,14 +228,16 @@
 
     <script>
         const container = document.getElementById('alertContainer');
+        const ordersContainer = document.getElementById('ordersContainer');
 
-        // Connect to the WebSocket.
+        // ----------------------------
+        // WebSocket for Alerts
+        // ----------------------------
         const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
         const ws = new WebSocket(`${protocol}//${window.location.host}/ws`);
 
         ws.onopen = function() {
             console.log('WebSocket connected.');
-            // Clear the "waiting" message.
             container.innerHTML = '';
         };
 
@@ -152,6 +245,8 @@
             try {
                 const alert = JSON.parse(event.data);
                 renderAlert(alert);
+                // When an alert comes in, also refresh orders (in case a reorder was triggered).
+                loadOrders();
             } catch (e) {
                 console.error('Failed to parse alert:', e);
             }
@@ -167,14 +262,12 @@
         };
 
         function renderAlert(alert) {
-            // Remove the empty state if it exists.
             const emptyState = container.querySelector('.empty-state');
             if (emptyState) emptyState.remove();
 
             const card = document.createElement('div');
             card.className = 'alert-card';
 
-            // Add severity class.
             if (alert.message.includes('FAILED')) {
                 card.classList.add('failed');
             } else if (alert.health_score <= 20) {
@@ -195,15 +288,109 @@
 
             card.appendChild(msgDiv);
             card.appendChild(metaDiv);
-
-            // Prepend to the container so newest alerts are at the top.
             container.prepend(card);
 
-            // Limit to 50 alerts to prevent memory bloat.
             while (container.children.length > 50) {
                 container.removeChild(container.lastChild);
             }
         }
+
+        // ----------------------------
+        // Orders Functions (NEW)
+        // ----------------------------
+        function loadOrders() {
+            fetch('/api/orders')
+                .then(response => response.json())
+                .then(orders => {
+                    renderOrders(orders);
+                })
+                .catch(err => {
+                    console.error('Failed to load orders:', err);
+                    ordersContainer.innerHTML = `<div class="empty-state">❌ Failed to load orders.</div>`;
+                });
+        }
+
+        function renderOrders(orders) {
+            if (!orders || orders.length === 0) {
+                ordersContainer.innerHTML = `<div class="empty-state">📭 No purchase orders found.</div>`;
+                return;
+            }
+
+            let html = `
+                <table class="order-table">
+                    <thead>
+                        <tr>
+                            <th>Order ID</th>
+                            <th>Item</th>
+                            <th>Quantity</th>
+                            <th>Status</th>
+                            <th>Action</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+            `;
+
+            orders.forEach(order => {
+                const isReceived = order.status === 'RECEIVED';
+                const isPending = order.status === 'PENDING';
+                const isApproved = order.status === 'APPROVED';
+
+                let statusClass = 'pending';
+                if (isReceived) statusClass = 'received';
+                if (isApproved) statusClass = 'approved';
+
+                html += `
+                    <tr>
+                        <td style="font-size:12px;color:#888;">${order.id}</td>
+                        <td>${order.item_name}</td>
+                        <td>${order.quantity}</td>
+                        <td><span class="status-badge ${statusClass}">${order.status}</span></td>
+                        <td>
+                            ${isApproved ? `<button class="btn-receive" onclick="receiveOrder('${order.id}')">📥 Receive</button>` : 
+                            isReceived ? `<span style="color:#555;">✅ Done</span>` : 
+                            `<span style="color:#888;">⏳ Processing</span>`}
+                        </td>
+                    </tr>
+                `;
+            });
+
+            html += `</tbody></table>`;
+            ordersContainer.innerHTML = html;
+        }
+
+        function receiveOrder(orderId) {
+            // Disable the button to prevent double-clicks
+            const buttons = document.querySelectorAll('.btn-receive');
+            buttons.forEach(btn => btn.disabled = true);
+
+            fetch(`/api/orders/${orderId}/receive`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' }
+            })
+            .then(response => response.json())
+            .then(data => {
+                console.log('Order received:', data);
+                // Reload orders to reflect the change
+                loadOrders();
+                // Also reload inventory/stock display if we had one
+            })
+            .catch(err => {
+                console.error('Failed to receive order:', err);
+                alert('Failed to receive order. Check console for details.');
+                // Re-enable buttons if there's an error
+                const btns = document.querySelectorAll('.btn-receive');
+                btns.forEach(btn => btn.disabled = false);
+            });
+        }
+
+        // ----------------------------
+        // Initial Load
+        // ----------------------------
+        // Load orders on page load.
+        loadOrders();
+
+        // Optional: Refresh orders every 30 seconds to catch new ones without WebSocket triggers.
+        setInterval(loadOrders, 30000);
     </script>
 </body>
 </html>
