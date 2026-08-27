@@ -6,15 +6,14 @@ WORKDIR /app
 # Copy go.mod and go.sum
 COPY go.mod go.sum ./
 
-# Set proxy and DNS (to avoid timeout)
-ENV GOPROXY=direct
-RUN echo "nameserver 8.8.8.8" > /etc/resolv.conf
+# Copy the vendor directory (contains all dependencies)
+COPY vendor ./vendor
 
 # Copy the rest of the source code
 COPY . .
 
-# Build the binary
-RUN CGO_ENABLED=0 GOOS=linux go build -o aegislog main.go
+# Build the binary using the vendor folder (no internet needed)
+RUN CGO_ENABLED=0 GOOS=linux go build -mod=vendor -o aegislog main.go
 
 # Stage 2: Create a minimal runtime image
 FROM alpine:latest
