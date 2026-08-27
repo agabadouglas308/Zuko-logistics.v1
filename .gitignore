@@ -1,0 +1,19 @@
+# Compiled binary
+aegislog
+*.exe
+
+# Environment variables (secrets)
+.env
+
+# Logs
+*.log
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS junk
+.DS_Store
+Thumbs.db

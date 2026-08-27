@@ -1,0 +1,33 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: aegislog-postgres
+    environment:
+      POSTGRES_USER: aegis_user
+      POSTGRES_PASSWORD: aegis123
+      POSTGRES_DB: aegislog
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U aegis_user -d aegislog"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  aegislog:
+    build: .
+    container_name: aegislog-app
+    ports:
+      - "8080:8080"
+    environment:
+      DATABASE_URL: "postgres://aegis_user:aegis123@postgres:5432/aegislog?sslmode=disable"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  postgres_data:

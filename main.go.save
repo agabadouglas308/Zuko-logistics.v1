@@ -1,0 +1,81 @@
+
+package main
+
+import "fmt"
+
+// Item represents a military supply item.
+// Capitalized fields mean "public" (visible to other code).
+type Item struct {
+	ID           string
+	Name         string
+	StockLevel   int
+	ReorderPoint int
+}
+
+// CanSell checks if we have enough stock to sell a requested quantity.
+// The (i *Item) means this function belongs to the Item struct.
+// It returns true if we have enough, false if we don't.
+func (i *Item) CanSell(quantity int) bool {
+	return i.StockLevel >= quantity
+}
+
+// AdjustStock changes the stock level by a positive (restock) or negative (sell) amount.
+// This enforces a military-grade rule: we never allow stock to go negative.
+func (i *Item) AdjustStock(quantity int) bool {
+	// If we are trying to remove more than we have, reject it.
+	if quantity < 0 && i.StockLevel+quantity < 0 {
+		return false // Operation failed
+	}
+	i.StockLevel = i.StockLevel + quantity
+	return true // Operation succeeded
+}
+
+func main() {
+	// Create our first real "Item" in memory.
+	// This is like using the "Item" blueprint to build an actual ammo crate.
+	ammoCrate := Item{
+		ID:           "AMMO-556-001",
+		Name:         "5.56mm Ammo Crate",
+		StockLevel:   100,
+		ReorderPoint: 50,
+	}
+
+	// Print the current status.
+	fmt.Println("=== AegisLog Inventory Check ===")
+	fmt.Printf("Item: %s\n", ammoCrate.Name)
+	fmt.Printf("Current Stock: %d\n", ammoCrate.StockLevel)
+	fmt.Println("----------------------------------")
+
+	// Test 1: Can we sell 30 rounds?
+	canSell30 := ammoCrate.CanSell(30)
+	fmt.Printf("Can sell 30? %t\n", canSell30) // %t prints true/false
+
+	// Test 2: Can we sell 150 rounds? (We only have 100)
+	canSell150 := ammoCrate.CanSell(150)
+	fmt.Printf("Can sell 150? %t\n", canSell150)
+
+	fmt.Println("----------------------------------")
+
+	// Test 3: Actually sell 30 rounds using AdjustStock.
+	// Remember: -30 means "remove 30"
+	success := ammoCrate.AdjustStock(-30)
+	if success {
+		fmt.Printf("Successfully sold 30. New Stock: %d\n", ammoCrate.StockLevel)
+	} else {
+		fmt.Println("Failed to sell 30.")
+	}
+
+	// Test 4: Try to sell 80 more rounds. (We only have 70 left)
+	fmt.Println("\nTrying to sell 80 more...")
+	success2 := ammoCrate.AdjustStock(-80)
+	if success2 {
+		fmt.Printf("Successfully sold 80. New Stock: %d\n", ammoCrate.StockLevel)
+	} else {
+		fmt.Printf("FAILED: Not enough stock. Current Stock is %d\n", ammoCrate.StockLevel)
+	}
+
+	// Test 5: Restock 200 rounds (positive number).
+	fmt.Println("\nRestocking 200 rounds...")
+	ammoCrate.AdjustStock(200)
+	fmt.Printf("Restock complete. New Stock: %d\n", ammoCrate.StockLevel)
+}
