@@ -156,6 +156,12 @@
             border-color: #555;
             color: #555;
         }
+        .btn-receive.loading {
+            background-color: #333;
+            border-color: #888;
+            color: #888;
+            cursor: wait;
+        }
         .status-badge {
             padding: 2px 10px;
             border-radius: 12px;
@@ -181,6 +187,33 @@
             font-size: 12px;
             color: #444;
             text-align: center;
+        }
+        /* Toast notification */
+        .toast {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            padding: 14px 24px;
+            border-radius: 6px;
+            font-family: 'Courier New', monospace;
+            font-weight: bold;
+            z-index: 999;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.8);
+            transition: opacity 0.3s ease;
+            opacity: 0;
+        }
+        .toast.success {
+            background-color: #1a4a1a;
+            border-left: 4px solid #4caf50;
+            color: #4caf50;
+        }
+        .toast.error {
+            background-color: #4a1a1a;
+            border-left: 4px solid #ff1744;
+            color: #ff1744;
+        }
+        .toast.show {
+            opacity: 1;
         }
     </style>
 </head>
@@ -208,19 +241,33 @@
         </div>
     </div>
 
+    <!-- Toast container -->
+    <div id="toast" class="toast"></div>
+
     <script>
         // ----------------------------
         // API Key Configuration
         // ----------------------------
-        // Replace this with your actual API key (or fetch from a meta tag).
-        // For now, we use a default key that matches the server's default.
         const API_KEY = 'default-dev-key';
 
         const container = document.getElementById('alertContainer');
         const ordersContainer = document.getElementById('ordersContainer');
+        const toastEl = document.getElementById('toast');
 
         // ----------------------------
-        // WebSocket for Alerts (no auth needed)
+        // Toast helper
+        // ----------------------------
+        function showToast(message, type = 'success') {
+            toastEl.textContent = message;
+            toastEl.className = 'toast ' + type + ' show';
+            clearTimeout(toastEl._timeout);
+            toastEl._timeout = setTimeout(() => {
+                toastEl.classList.remove('show');
+            }, 4000);
+        }
+
+        // ----------------------------
+        // WebSocket for Alerts
         // ----------------------------
         const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
         const ws = new WebSocket(`${protocol}//${window.location.host}/ws`);
@@ -288,7 +335,6 @@
         // Orders Functions (with API key)
         // ----------------------------
         function loadOrders() {
-            // GET /api/orders is public (no auth needed)
             fetch('/api/orders')
                 .then(response => response.json())
                 .then(orders => {
@@ -329,17 +375,23 @@
                 if (isReceived) statusClass = 'received';
                 if (isApproved) statusClass = 'approved';
 
+                // Determine action cell content
+                let actionHtml = '';
+                if (isApproved) {
+                    actionHtml = `<button class="btn-receive" onclick="receiveOrder('${order.id}')">📥 Receive</button>`;
+                } else if (isReceived) {
+                    actionHtml = `<span style="color:#555;">✅ Done</span>`;
+                } else {
+                    actionHtml = `<span style="color:#888;">⏳ Processing</span>`;
+                }
+
                 html += `
                     <tr>
                         <td style="font-size:12px;color:#888;">${order.id}</td>
                         <td>${order.item_name}</td>
                         <td>${order.quantity}</td>
                         <td><span class="status-badge ${statusClass}">${order.status}</span></td>
-                        <td>
-                            ${isApproved ? `<button class="btn-receive" onclick="receiveOrder('${order.id}')">📥 Receive</button>` : 
-                            isReceived ? `<span style="color:#555;">✅ Done</span>` : 
-                            `<span style="color:#888;">⏳ Processing</span>`}
-                        </td>
+                        <td>${actionHtml}</td>
                     </tr>
                 `;
             });
@@ -349,29 +401,46 @@
         }
 
         function receiveOrder(orderId) {
-            // Disable buttons to prevent double-clicks
+            // Find the button and disable it, show loading state
             const buttons = document.querySelectorAll('.btn-receive');
             buttons.forEach(btn => btn.disabled = true);
+            // Find the specific button for this order and add loading class
+            const targetBtn = Array.from(buttons).find(btn => btn.textContent.includes('Receive') && btn.onclick.toString().includes(orderId));
+            if (targetBtn) {
+                targetBtn.classList.add('loading');
+                targetBtn.textContent = '⏳ Processing...';
+            }
 
-            // Include API key in the Authorization header (or custom header)
             fetch(`/api/orders/${orderId}/receive`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
-                    'X-API-Key': API_KEY   // <-- Send API key
+                    'X-API-Key': API_KEY
                 }
             })
-            .then(response => response.json())
+            .then(response => {
+                if (!response.ok) {
+                    return response.text().then(text => { throw new Error(text || 'Server error'); });
+                }
+                return response.json();
+            })
             .then(data => {
                 console.log('Order received:', data);
-                loadOrders(); // Refresh orders
+                showToast('✅ Order received successfully! Stock updated.', 'success');
+                loadOrders(); // Refresh the orders table
             })
             .catch(err => {
                 console.error('Failed to receive order:', err);
-                alert('Failed to receive order. Check console for details.');
-                // Re-enable buttons if there's an error
+                showToast('❌ Failed to receive order: ' + err.message, 'error');
+                // Re-enable buttons on error
                 const btns = document.querySelectorAll('.btn-receive');
-                btns.forEach(btn => btn.disabled = false);
+                btns.forEach(btn => {
+                    btn.disabled = false;
+                    btn.classList.remove('loading');
+                    if (btn.textContent.includes('Processing')) {
+                        btn.textContent = '📥 Receive';
+                    }
+                });
             });
         }
 
