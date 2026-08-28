@@ -13,40 +13,15 @@ import (
 	"sync"
 	"time"
 
-	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/gorilla/websocket"
+	_ "github.com/jackc/pgx/v5/stdlib"
 )
 
 //go:embed index.html
 var htmlContent embed.FS
 
 // ----------------------------
-// API Key Authentication
-// ----------------------------
-var apiKey string
-
-func init() {
-	apiKey = os.Getenv("API_KEY")
-	if apiKey == "" {
-		apiKey = "default-dev-key"
-		log.Println("⚠️  WARNING: Using default API_KEY. Set it in environment for production.")
-	}
-}
-
-func apiKeyMiddleware(next http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		// Check the X-API-Key header
-		key := r.Header.Get("X-API-Key")
-		if key != apiKey {
-			http.Error(w, "Unauthorized: invalid API key", http.StatusUnauthorized)
-			return
-		}
-		next(w, r)
-	}
-}
-
-// ----------------------------
-// Database setup (unchanged)
+// Database setup
 // ----------------------------
 func initDB(db *sql.DB) error {
 	itemsTable := `
@@ -103,7 +78,7 @@ func seedItems(db *sql.DB) error {
 }
 
 // ----------------------------
-// Inventory Module (unchanged)
+// Inventory Module
 // ----------------------------
 type InventoryDB struct {
 	db *sql.DB
@@ -225,7 +200,7 @@ func (inv *InventoryDB) DisplayAllItems() {
 }
 
 // ----------------------------
-// Procurement Module (unchanged)
+// Procurement Module
 // ----------------------------
 type PurchaseOrder struct {
 	ID         string    `json:"id"`
@@ -363,7 +338,7 @@ func (ps *ProcurementDB) ReceiveOrder(orderID string) error {
 }
 
 // ----------------------------
-// Predictive Maintenance (unchanged)
+// Predictive Maintenance
 // ----------------------------
 type Equipment struct {
 	ID          string
@@ -415,7 +390,7 @@ func monitorEquipment(equip Equipment, alertChannel chan MaintenanceAlert) {
 }
 
 // ----------------------------
-// WebSocket Hub (unchanged)
+// WebSocket Hub
 // ----------------------------
 var (
 	clients   = make(map[*websocket.Conn]bool)
@@ -475,7 +450,7 @@ func broadcastAlerts() {
 }
 
 // ----------------------------
-// REST API Handlers
+// REST API Handlers (Public)
 // ----------------------------
 type Item struct {
 	ID           string `json:"id"`
@@ -492,7 +467,6 @@ type ErrorResponse struct {
 	Error string `json:"error"`
 }
 
-// Public handlers
 func handleGetItems(inv *InventoryDB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		items, err := inv.GetAllItems()
@@ -532,20 +506,6 @@ func handleGetItem(inv *InventoryDB) http.HandlerFunc {
 	}
 }
 
-func handleGetOrders(proc *ProcurementDB) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		orders, err := proc.GetRecentOrders(10)
-		if err != nil {
-			w.WriteHeader(http.StatusInternalServerError)
-			json.NewEncoder(w).Encode(ErrorResponse{Error: err.Error()})
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(orders)
-	}
-}
-
-// Protected handlers (wrapped with apiKeyMiddleware)
 func handleAdjustStock(inv *InventoryDB, orderChan chan PurchaseOrder) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
@@ -579,6 +539,19 @@ func handleAdjustStock(inv *InventoryDB, orderChan chan PurchaseOrder) http.Hand
 		item, _ := inv.GetItemByID(id)
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(item)
+	}
+}
+
+func handleGetOrders(proc *ProcurementDB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		orders, err := proc.GetRecentOrders(10)
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			json.NewEncoder(w).Encode(ErrorResponse{Error: err.Error()})
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(orders)
 	}
 }
 
@@ -691,14 +664,12 @@ func main() {
 	})
 	http.HandleFunc("/ws", handleWebSocket)
 
-	// Public endpoints
+	// Public endpoints (no auth required)
 	http.HandleFunc("GET /api/items", handleGetItems(inventory))
 	http.HandleFunc("GET /api/items/{id}", handleGetItem(inventory))
+	http.HandleFunc("POST /api/items/{id}/adjust", handleAdjustStock(inventory, orderChannel))
 	http.HandleFunc("GET /api/orders", handleGetOrders(procurement))
-
-	// Protected endpoints (with API key)
-	http.HandleFunc("POST /api/items/{id}/adjust", apiKeyMiddleware(handleAdjustStock(inventory, orderChannel)))
-	http.HandleFunc("POST /api/orders/{id}/receive", apiKeyMiddleware(handleReceiveOrder(procurement)))
+	http.HandleFunc("POST /api/orders/{id}/receive", handleReceiveOrder(procurement))
 
 	port := os.Getenv("PORT")
 	if port == "" {
@@ -706,8 +677,9 @@ func main() {
 	}
 	fmt.Printf("\n🚀 AegisLog Web Server running at http://localhost:%s\n", port)
 	fmt.Println("📲 WebSocket alerts: ws://localhost/ws")
-	fmt.Println("🔒 Protected endpoints require X-API-Key header.")
+	fmt.Println("🔓 All endpoints are public (no authentication)")
 	fmt.Println("Press Ctrl+C to stop.\n")
 
 	log.Fatal(http.ListenAndServe(":"+port, nil))
 }
+EOF
