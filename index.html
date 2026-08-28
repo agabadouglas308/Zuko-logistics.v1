@@ -107,34 +107,6 @@
             margin-top: 20px;
             font-size: 18px;
         }
-        /* Scrollbar styling */
-        .alert-container::-webkit-scrollbar,
-        .orders-container::-webkit-scrollbar {
-            width: 8px;
-        }
-        .alert-container::-webkit-scrollbar-track,
-        .orders-container::-webkit-scrollbar-track {
-            background: #1a1a1a;
-        }
-        .alert-container::-webkit-scrollbar-thumb,
-        .orders-container::-webkit-scrollbar-thumb {
-            background: #444;
-            border-radius: 4px;
-        }
-        .alert-container::-webkit-scrollbar-thumb:hover,
-        .orders-container::-webkit-scrollbar-thumb:hover {
-            background: #ff6a00;
-        }
-        .footer {
-            margin-top: 30px;
-            border-top: 1px solid #222;
-            padding-top: 15px;
-            font-size: 12px;
-            color: #444;
-            text-align: center;
-        }
-
-        /* --- NEW: Orders Table Styles --- */
         .orders-container {
             max-height: 40vh;
             overflow-y: auto;
@@ -202,36 +174,53 @@
             color: #ffa500;
             border: 1px solid #ffa500;
         }
+        .footer {
+            margin-top: 30px;
+            border-top: 1px solid #222;
+            padding-top: 15px;
+            font-size: 12px;
+            color: #444;
+            text-align: center;
+        }
     </style>
 </head>
 <body>
-    <div class="header">
-        <h1>⚙️ AEGISLOG</h1>
-        <div class="status">● LIVE PREDICTIVE MAINTENANCE</div>
-    </div>
+    <div class="container">
+        <div class="header">
+            <h1>⚙️ AEGISLOG</h1>
+            <div class="status">● LIVE PREDICTIVE MAINTENANCE</div>
+        </div>
 
-    <!-- Alerts Section -->
-    <div class="section-title">🚨 MAINTENANCE ALERTS</div>
-    <div id="alertContainer" class="alert-container">
-        <div class="empty-state">⏳ Waiting for equipment alerts...</div>
-    </div>
+        <!-- Alerts Section -->
+        <div class="section-title">🚨 MAINTENANCE ALERTS</div>
+        <div id="alertContainer" class="alert-container">
+            <div class="empty-state">⏳ Waiting for equipment alerts...</div>
+        </div>
 
-    <!-- Orders Section (NEW) -->
-    <div class="section-title">📦 PURCHASE ORDERS</div>
-    <div id="ordersContainer" class="orders-container">
-        <div class="empty-state">⏳ Loading orders...</div>
-    </div>
+        <!-- Orders Section -->
+        <div class="section-title">📦 PURCHASE ORDERS</div>
+        <div id="ordersContainer" class="orders-container">
+            <div class="empty-state">⏳ Loading orders...</div>
+        </div>
 
-    <div class="footer">
-        <span>Classified: Military-Grade Logistics | Real-Time Anomaly Detection</span>
+        <div class="footer">
+            <span>Classified: Military-Grade Logistics | Real-Time Anomaly Detection</span>
+        </div>
     </div>
 
     <script>
+        // ----------------------------
+        // API Key Configuration
+        // ----------------------------
+        // Replace this with your actual API key (or fetch from a meta tag).
+        // For now, we use a default key that matches the server's default.
+        const API_KEY = 'default-dev-key';
+
         const container = document.getElementById('alertContainer');
         const ordersContainer = document.getElementById('ordersContainer');
 
         // ----------------------------
-        // WebSocket for Alerts
+        // WebSocket for Alerts (no auth needed)
         // ----------------------------
         const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
         const ws = new WebSocket(`${protocol}//${window.location.host}/ws`);
@@ -245,7 +234,7 @@
             try {
                 const alert = JSON.parse(event.data);
                 renderAlert(alert);
-                // When an alert comes in, also refresh orders (in case a reorder was triggered).
+                // Refresh orders when an alert arrives (in case a reorder was triggered).
                 loadOrders();
             } catch (e) {
                 console.error('Failed to parse alert:', e);
@@ -296,9 +285,10 @@
         }
 
         // ----------------------------
-        // Orders Functions (NEW)
+        // Orders Functions (with API key)
         // ----------------------------
         function loadOrders() {
+            // GET /api/orders is public (no auth needed)
             fetch('/api/orders')
                 .then(response => response.json())
                 .then(orders => {
@@ -359,20 +349,22 @@
         }
 
         function receiveOrder(orderId) {
-            // Disable the button to prevent double-clicks
+            // Disable buttons to prevent double-clicks
             const buttons = document.querySelectorAll('.btn-receive');
             buttons.forEach(btn => btn.disabled = true);
 
+            // Include API key in the Authorization header (or custom header)
             fetch(`/api/orders/${orderId}/receive`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' }
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-API-Key': API_KEY   // <-- Send API key
+                }
             })
             .then(response => response.json())
             .then(data => {
                 console.log('Order received:', data);
-                // Reload orders to reflect the change
-                loadOrders();
-                // Also reload inventory/stock display if we had one
+                loadOrders(); // Refresh orders
             })
             .catch(err => {
                 console.error('Failed to receive order:', err);
@@ -386,10 +378,8 @@
         // ----------------------------
         // Initial Load
         // ----------------------------
-        // Load orders on page load.
         loadOrders();
-
-        // Optional: Refresh orders every 30 seconds to catch new ones without WebSocket triggers.
+        // Refresh orders every 30 seconds
         setInterval(loadOrders, 30000);
     </script>
 </body>
