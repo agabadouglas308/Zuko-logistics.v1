@@ -259,8 +259,10 @@ func handleLogin(db *sql.DB) http.HandlerFunc {
 	}
 }
 
-// JWT Middleware
-func jwtMiddleware(next http.HandlerFunc) http.HandlerFunc {
+// ----------------------------
+// JWT Middleware (now checks user existence in DB)
+// ----------------------------
+func jwtMiddleware(db *sql.DB, next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		authHeader := r.Header.Get("Authorization")
 		if authHeader == "" {
@@ -284,12 +286,25 @@ func jwtMiddleware(next http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 
+		// --- NEW: Check if user still exists in the database ---
+		var exists bool
+		err = db.QueryRow("SELECT EXISTS(SELECT 1 FROM users WHERE username = $1)", claims.Username).Scan(&exists)
+		if err != nil {
+			log.Printf("Error checking user existence: %v", err)
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			return
+		}
+		if !exists {
+			http.Error(w, "User no longer exists", http.StatusUnauthorized)
+			return
+		}
+
 		next(w, r)
 	}
 }
 
 // ----------------------------
-// Inventory Module
+// Inventory Module (unchanged)
 // ----------------------------
 type InventoryDB struct {
 	db *sql.DB
@@ -411,7 +426,7 @@ func (inv *InventoryDB) DisplayAllItems() {
 }
 
 // ----------------------------
-// Procurement Module
+// Procurement Module (unchanged)
 // ----------------------------
 type PurchaseOrder struct {
 	ID        string    `json:"id"`
@@ -549,7 +564,7 @@ func (ps *ProcurementDB) ReceiveOrder(orderID string) error {
 }
 
 // ----------------------------
-// Predictive Maintenance
+// Predictive Maintenance (unchanged)
 // ----------------------------
 type Equipment struct {
 	ID          string
@@ -601,7 +616,7 @@ func monitorEquipment(equip Equipment, alertChannel chan MaintenanceAlert) {
 }
 
 // ----------------------------
-// WebSocket Hub
+// WebSocket Hub (unchanged)
 // ----------------------------
 var (
 	clients   = make(map[*websocket.Conn]bool)
@@ -888,9 +903,9 @@ func main() {
 	http.HandleFunc("/api/register", handleRegister(db))
 	http.HandleFunc("/api/login", handleLogin(db))
 
-	// Protected POST endpoints (JWT required)
-	http.HandleFunc("POST /api/items/{id}/adjust", jwtMiddleware(handleAdjustStock(inventory, orderChannel)))
-	http.HandleFunc("POST /api/orders/{id}/receive", jwtMiddleware(handleReceiveOrder(procurement)))
+	// Protected POST endpoints (JWT required) – pass db to middleware
+	http.HandleFunc("POST /api/items/{id}/adjust", jwtMiddleware(db, handleAdjustStock(inventory, orderChannel)))
+	http.HandleFunc("POST /api/orders/{id}/receive", jwtMiddleware(db, handleReceiveOrder(procurement)))
 
 	port := os.Getenv("PORT")
 	if port == "" {
