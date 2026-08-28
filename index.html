@@ -123,8 +123,9 @@
         // ----------------------------
         // State
         // ----------------------------
-        let token = localStorage.getItem('aegislog_token');
-        let isLogin = true; // true = login, false = register
+        let accessToken = localStorage.getItem('aegislog_access_token');
+        let refreshToken = localStorage.getItem('aegislog_refresh_token');
+        let isLogin = true;
 
         const loginSection = document.getElementById('loginSection');
         const dashboardSection = document.getElementById('dashboardSection');
@@ -144,6 +145,42 @@
             toast.className = 'toast ' + type + ' show';
             clearTimeout(toast._timeout);
             toast._timeout = setTimeout(() => toast.classList.remove('show'), 4000);
+        }
+
+        // ----------------------------
+        // API helper (with automatic refresh)
+        // ----------------------------
+        async function apiRequest(url, options = {}) {
+            if (!options.headers) options.headers = {};
+            if (accessToken) {
+                options.headers['Authorization'] = 'Bearer ' + accessToken;
+            }
+
+            let response = await fetch(url, options);
+
+            if (response.status === 401 && accessToken && refreshToken) {
+                try {
+                    const refreshResponse = await fetch('/api/refresh', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ refresh_token: refreshToken })
+                    });
+
+                    if (refreshResponse.ok) {
+                        const data = await refreshResponse.json();
+                        if (data.access_token) {
+                            accessToken = data.access_token;
+                            localStorage.setItem('aegislog_access_token', accessToken);
+                            options.headers['Authorization'] = 'Bearer ' + accessToken;
+                            response = await fetch(url, options);
+                        }
+                    }
+                } catch (e) {
+                    console.error('Refresh failed:', e);
+                }
+            }
+
+            return response;
         }
 
         // ----------------------------
@@ -196,9 +233,11 @@
                 return response.json();
             })
             .then(data => {
-                if (data.token) {
-                    token = data.token;
-                    localStorage.setItem('aegislog_token', token);
+                if (data.access_token && data.refresh_token) {
+                    accessToken = data.access_token;
+                    refreshToken = data.refresh_token;
+                    localStorage.setItem('aegislog_access_token', accessToken);
+                    localStorage.setItem('aegislog_refresh_token', refreshToken);
                     showDashboard();
                     errorEl.textContent = '';
                 } else {
@@ -233,7 +272,6 @@
             .then(data => {
                 errorEl.textContent = '';
                 showToast('✅ Registration successful! Please login.', 'success');
-                // Switch to login form and pre-fill username
                 isLogin = true;
                 toggleForm();
                 usernameInput.value = username;
@@ -248,15 +286,25 @@
         // Logout
         // ----------------------------
         function logout() {
-            localStorage.removeItem('aegislog_token');
-            token = null;
+            if (refreshToken) {
+                fetch('/api/logout', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ refresh_token: refreshToken })
+                }).catch(() => {});
+            }
+            localStorage.removeItem('aegislog_access_token');
+            localStorage.removeItem('aegislog_refresh_token');
+            accessToken = null;
+            refreshToken = null;
             loginSection.style.display = 'flex';
             dashboardSection.style.display = 'none';
+            // Reload to reset all state
             location.reload();
         }
 
         // ----------------------------
-        // Show Dashboard (start WebSocket, load orders)
+        // Show Dashboard
         // ----------------------------
         function showDashboard() {
             loginSection.style.display = 'none';
@@ -267,7 +315,7 @@
         }
 
         // ----------------------------
-        // WebSocket (alerts, no auth)
+        // WebSocket
         // ----------------------------
         function initializeWebSocket() {
             const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -283,7 +331,7 @@
                 try {
                     const alert = JSON.parse(event.data);
                     renderAlert(alert);
-                    loadOrders(); // refresh orders if auto-reorder triggered
+                    loadOrders();
                 } catch (e) {
                     console.error('Failed to parse alert:', e);
                 }
@@ -330,18 +378,21 @@
         }
 
         // ----------------------------
-        // Orders (with JWT)
+        // Orders (with auto-refresh)
         // ----------------------------
-        function loadOrders() {
-            fetch('/api/orders', {
-                headers: { 'Authorization': 'Bearer ' + token }
-            })
-            .then(response => response.json())
-            .then(orders => renderOrders(orders))
-            .catch(err => {
+        async function loadOrders() {
+            try {
+                const response = await apiRequest('/api/orders');
+                if (response.ok) {
+                    const orders = await response.json();
+                    renderOrders(orders);
+                } else {
+                    document.getElementById('ordersContainer').innerHTML = `<div class="empty-state">❌ Failed to load orders.</div>`;
+                }
+            } catch (err) {
                 console.error('Failed to load orders:', err);
                 document.getElementById('ordersContainer').innerHTML = `<div class="empty-state">❌ Failed to load orders.</div>`;
-            });
+            }
         }
 
         function renderOrders(orders) {
@@ -388,64 +439,43 @@
             container.innerHTML = html;
         }
 
-        function receiveOrder(orderId) {
+        async function receiveOrder(orderId) {
             const buttons = document.querySelectorAll('.btn-receive');
             buttons.forEach(btn => { btn.disabled = true; btn.classList.add('loading'); btn.textContent = '⏳ Processing...'; });
 
-            fetch(`/api/orders/${orderId}/receive`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': 'Bearer ' + token
+            try {
+                const response = await apiRequest(`/api/orders/${orderId}/receive`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' }
+                });
+
+                if (response.ok) {
+                    showToast('✅ Order received successfully! Stock updated.', 'success');
+                    loadOrders();
+                } else {
+                    const text = await response.text();
+                    throw new Error(text || 'Server error');
                 }
-            })
-            .then(response => {
-                if (!response.ok) {
-                    return response.text().then(text => { throw new Error(text || 'Server error'); });
-                }
-                return response.json();
-            })
-            .then(data => {
-                console.log('Order received:', data);
-                showToast('✅ Order received successfully! Stock updated.', 'success');
-                loadOrders();
-            })
-            .catch(err => {
+            } catch (err) {
                 console.error('Failed to receive order:', err);
                 showToast('❌ Failed to receive order: ' + err.message, 'error');
-                // Re-enable buttons on error
                 const btns = document.querySelectorAll('.btn-receive');
                 btns.forEach(btn => { btn.disabled = false; btn.classList.remove('loading'); btn.textContent = '📥 Receive'; });
-            });
+            }
         }
 
         // ----------------------------
-        // Initialization – check stored token
+        // Initialization – ALWAYS show login page, ignore stored tokens
         // ----------------------------
-        if (token) {
-            // Try to load orders with stored token – if unauthorized, show login
-            fetch('/api/orders', {
-                headers: { 'Authorization': 'Bearer ' + token }
-            })
-            .then(response => {
-                if (response.status === 401) {
-                    throw new Error('Unauthorized');
-                }
-                return response.json();
-            })
-            .then(() => {
-                showDashboard();
-            })
-            .catch(() => {
-                localStorage.removeItem('aegislog_token');
-                token = null;
-                loginSection.style.display = 'flex';
-                dashboardSection.style.display = 'none';
-            });
-        } else {
-            loginSection.style.display = 'flex';
-            dashboardSection.style.display = 'none';
-        }
+        // Clear any existing tokens to ensure fresh login
+        localStorage.removeItem('aegislog_access_token');
+        localStorage.removeItem('aegislog_refresh_token');
+        accessToken = null;
+        refreshToken = null;
+
+        // Show login page, hide dashboard
+        loginSection.style.display = 'flex';
+        dashboardSection.style.display = 'none';
     </script>
 </body>
 </html>
