@@ -3,6 +3,7 @@ package main
 import (
 	"database/sql"
 	"embed"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -12,6 +13,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	cryptorand "crypto/rand"
 
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/gorilla/websocket"
@@ -43,7 +46,7 @@ type Claims struct {
 }
 
 // ----------------------------
-// Database setup (with users table)
+// Database setup (with refresh_tokens table)
 // ----------------------------
 func initDB(db *sql.DB) error {
 	itemsTable := `
@@ -80,6 +83,18 @@ func initDB(db *sql.DB) error {
 	);`
 	if _, err := db.Exec(usersTable); err != nil {
 		return fmt.Errorf("failed to create users table: %w", err)
+	}
+
+	refreshTokensTable := `
+	CREATE TABLE IF NOT EXISTS refresh_tokens (
+		id SERIAL PRIMARY KEY,
+		user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+		token TEXT UNIQUE NOT NULL,
+		expires_at TIMESTAMP NOT NULL,
+		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+	);`
+	if _, err := db.Exec(refreshTokensTable); err != nil {
+		return fmt.Errorf("failed to create refresh_tokens table: %w", err)
 	}
 
 	fmt.Println("✅ Database tables verified/created.")
@@ -156,6 +171,20 @@ func getUserByUsername(db *sql.DB, username string) (id int, passwordHash string
 	return id, passwordHash, role, nil
 }
 
+func getUserByID(db *sql.DB, userID int) (username string, role string, err error) {
+	err = db.QueryRow(
+		"SELECT username, role FROM users WHERE id = $1",
+		userID,
+	).Scan(&username, &role)
+	if err == sql.ErrNoRows {
+		return "", "", nil
+	}
+	if err != nil {
+		return "", "", err
+	}
+	return username, role, nil
+}
+
 func createUser(db *sql.DB, username, password string) error {
 	hashed, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 	if err != nil {
@@ -165,6 +194,49 @@ func createUser(db *sql.DB, username, password string) error {
 		"INSERT INTO users (username, password_hash) VALUES ($1, $2)",
 		username, string(hashed),
 	)
+	return err
+}
+
+// ----------------------------
+// Refresh Token functions
+// ----------------------------
+func generateRefreshToken() (string, error) {
+	bytes := make([]byte, 32)
+	if _, err := cryptorand.Read(bytes); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(bytes), nil
+}
+
+func storeRefreshToken(db *sql.DB, userID int, token string, expiresAt time.Time) error {
+	_, err := db.Exec(
+		"INSERT INTO refresh_tokens (user_id, token, expires_at) VALUES ($1, $2, $3)",
+		userID, token, expiresAt,
+	)
+	return err
+}
+
+func validateRefreshToken(db *sql.DB, token string) (userID int, err error) {
+	var expiresAt time.Time
+	err = db.QueryRow(
+		"SELECT user_id, expires_at FROM refresh_tokens WHERE token = $1",
+		token,
+	).Scan(&userID, &expiresAt)
+	if err == sql.ErrNoRows {
+		return 0, fmt.Errorf("invalid refresh token")
+	}
+	if err != nil {
+		return 0, err
+	}
+	if time.Now().After(expiresAt) {
+		db.Exec("DELETE FROM refresh_tokens WHERE token = $1", token)
+		return 0, fmt.Errorf("refresh token expired")
+	}
+	return userID, nil
+}
+
+func revokeRefreshToken(db *sql.DB, token string) error {
+	_, err := db.Exec("DELETE FROM refresh_tokens WHERE token = $1", token)
 	return err
 }
 
@@ -236,31 +308,128 @@ func handleLogin(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
-		expiration := time.Now().Add(24 * time.Hour)
-		claims := &Claims{
+		// Generate access token (short-lived: 15 minutes)
+		accessExpiration := time.Now().Add(15 * time.Minute)
+		accessClaims := &Claims{
 			Username: creds.Username,
 			UserID:   userID,
 			Role:     role,
 			RegisteredClaims: jwt.RegisteredClaims{
-				ExpiresAt: jwt.NewNumericDate(expiration),
+				ExpiresAt: jwt.NewNumericDate(accessExpiration),
 				IssuedAt:  jwt.NewNumericDate(time.Now()),
 				Issuer:    "aegislog",
 			},
 		}
-		token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-		tokenString, err := token.SignedString(jwtSecret)
+		accessToken := jwt.NewWithClaims(jwt.SigningMethodHS256, accessClaims)
+		accessTokenString, err := accessToken.SignedString(jwtSecret)
 		if err != nil {
-			http.Error(w, "Failed to generate token", http.StatusInternalServerError)
+			http.Error(w, "Failed to generate access token", http.StatusInternalServerError)
+			return
+		}
+
+		// Generate refresh token (long-lived: 7 days)
+		refreshTokenString, err := generateRefreshToken()
+		if err != nil {
+			http.Error(w, "Failed to generate refresh token", http.StatusInternalServerError)
+			return
+		}
+		refreshExpiration := time.Now().Add(7 * 24 * time.Hour)
+		if err := storeRefreshToken(db, userID, refreshTokenString, refreshExpiration); err != nil {
+			http.Error(w, "Failed to store refresh token", http.StatusInternalServerError)
 			return
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]string{"token": tokenString})
+		json.NewEncoder(w).Encode(map[string]string{
+			"access_token":  accessTokenString,
+			"refresh_token": refreshTokenString,
+			"token_type":    "Bearer",
+			"expires_in":    "900",
+		})
+	}
+}
+
+func handleRefresh(db *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		var req struct {
+			RefreshToken string `json:"refresh_token"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "Invalid request body", http.StatusBadRequest)
+			return
+		}
+		if req.RefreshToken == "" {
+			http.Error(w, "refresh_token required", http.StatusBadRequest)
+			return
+		}
+
+		userID, err := validateRefreshToken(db, req.RefreshToken)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusUnauthorized)
+			return
+		}
+
+		username, role, err := getUserByID(db, userID)
+		if err != nil || username == "" {
+			http.Error(w, "User not found", http.StatusUnauthorized)
+			return
+		}
+
+		accessExpiration := time.Now().Add(15 * time.Minute)
+		accessClaims := &Claims{
+			Username: username,
+			UserID:   userID,
+			Role:     role,
+			RegisteredClaims: jwt.RegisteredClaims{
+				ExpiresAt: jwt.NewNumericDate(accessExpiration),
+				IssuedAt:  jwt.NewNumericDate(time.Now()),
+				Issuer:    "aegislog",
+			},
+		}
+		accessToken := jwt.NewWithClaims(jwt.SigningMethodHS256, accessClaims)
+		accessTokenString, err := accessToken.SignedString(jwtSecret)
+		if err != nil {
+			http.Error(w, "Failed to generate access token", http.StatusInternalServerError)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]string{
+			"access_token": accessTokenString,
+			"token_type":   "Bearer",
+			"expires_in":   "900",
+		})
+	}
+}
+
+func handleLogout(db *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		var req struct {
+			RefreshToken string `json:"refresh_token"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "Invalid request body", http.StatusBadRequest)
+			return
+		}
+		if req.RefreshToken != "" {
+			revokeRefreshToken(db, req.RefreshToken)
+		}
+		w.WriteHeader(http.StatusNoContent)
 	}
 }
 
 // ----------------------------
-// JWT Middleware (now checks user existence in DB)
+// JWT Middleware (with user existence check)
 // ----------------------------
 func jwtMiddleware(db *sql.DB, next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -286,7 +455,6 @@ func jwtMiddleware(db *sql.DB, next http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 
-		// --- NEW: Check if user still exists in the database ---
 		var exists bool
 		err = db.QueryRow("SELECT EXISTS(SELECT 1 FROM users WHERE username = $1)", claims.Username).Scan(&exists)
 		if err != nil {
@@ -676,7 +844,7 @@ func broadcastAlerts() {
 }
 
 // ----------------------------
-// REST API Handlers
+// REST API Handlers (unchanged)
 // ----------------------------
 type Item struct {
 	ID           string `json:"id"`
@@ -895,15 +1063,17 @@ func main() {
 	})
 	http.HandleFunc("/ws", handleWebSocket)
 
-	// Public endpoints (GET + login/register)
+	// Public endpoints (GET + login/register/refresh)
 	http.HandleFunc("GET /api/items", handleGetItems(inventory))
 	http.HandleFunc("GET /api/items/{id}", handleGetItem(inventory))
 	http.HandleFunc("GET /api/orders", handleGetOrders(procurement))
 
 	http.HandleFunc("/api/register", handleRegister(db))
 	http.HandleFunc("/api/login", handleLogin(db))
+	http.HandleFunc("/api/refresh", handleRefresh(db))
+	http.HandleFunc("/api/logout", handleLogout(db))
 
-	// Protected POST endpoints (JWT required) – pass db to middleware
+	// Protected POST endpoints (JWT required)
 	http.HandleFunc("POST /api/items/{id}/adjust", jwtMiddleware(db, handleAdjustStock(inventory, orderChannel)))
 	http.HandleFunc("POST /api/orders/{id}/receive", jwtMiddleware(db, handleReceiveOrder(procurement)))
 
@@ -916,6 +1086,7 @@ func main() {
 	fmt.Println("📲 WebSocket alerts: ws://localhost/ws")
 	fmt.Println("🔒 Protected endpoints require JWT (login via /api/login)")
 	fmt.Println("📝 Registration endpoint: /api/register")
+	fmt.Println("🔄 Refresh endpoint: /api/refresh")
 	fmt.Println("Press Ctrl+C to stop.\n")
 
 	log.Fatal(http.ListenAndServe(":"+port, nil))
