@@ -56,7 +56,7 @@
         .toast.error { background-color: #4a1a1a; border-left: 4px solid #ff1744; color: #ff1744; }
         .toast.show { opacity: 1; }
 
-        /* Login form */
+        /* Login / Register form */
         #loginSection { display: flex; justify-content: center; align-items: center; min-height: 70vh; }
         #loginForm { background: #141414; border: 1px solid #333; border-radius: 8px; padding: 30px; max-width: 400px; width: 100%; }
         #loginForm h2 { color: #ff6a00; margin-bottom: 20px; text-align: center; }
@@ -65,26 +65,32 @@
         #loginForm button { margin-top: 20px; width: 100%; padding: 10px; background-color: #ff6a00; color: #0a0a0a; border: none; border-radius: 4px; font-weight: bold; font-size: 16px; cursor: pointer; }
         #loginForm button:hover { background-color: #ff8533; }
         #loginError { color: #ff1744; margin-top: 10px; text-align: center; }
+        .toggle-link { color: #ff6a00; cursor: pointer; text-decoration: underline; margin-top: 10px; display: inline-block; }
+        .toggle-link:hover { color: #ff8533; }
+
         .logout-btn { background: none; border: 1px solid #555; color: #888; padding: 4px 12px; border-radius: 4px; cursor: pointer; font-family: inherit; }
         .logout-btn:hover { color: #ff6a00; border-color: #ff6a00; }
     </style>
 </head>
 <body>
     <div class="container" id="app">
-        <!-- Login Section -->
+        <!-- Login / Register Section -->
         <div id="loginSection">
             <div id="loginForm">
-                <h2>🔐 AegisLog Login</h2>
+                <h2 id="formTitle">🔐 AegisLog Login</h2>
                 <label>Username</label>
-                <input type="text" id="username" value="admin">
+                <input type="text" id="username" placeholder="username" autocomplete="username">
                 <label>Password</label>
-                <input type="password" id="password" value="password123">
-                <button onclick="login()">Sign In</button>
+                <input type="password" id="password" placeholder="••••••••" autocomplete="current-password">
+                <button id="actionBtn" onclick="submitForm()">Sign In</button>
                 <div id="loginError"></div>
+                <div>
+                    <span class="toggle-link" id="toggleLink" onclick="toggleForm()">Don't have an account? Register</span>
+                </div>
             </div>
         </div>
 
-        <!-- Dashboard (hidden until login) -->
+        <!-- Dashboard Section (hidden until login) -->
         <div id="dashboardSection" style="display:none;">
             <div class="header">
                 <h1>⚙️ AEGISLOG</h1>
@@ -110,24 +116,74 @@
         </div>
     </div>
 
+    <!-- Toast notification -->
     <div id="toast" class="toast"></div>
 
     <script>
         // ----------------------------
-        // JWT Token Management
+        // State
         // ----------------------------
         let token = localStorage.getItem('aegislog_token');
+        let isLogin = true; // true = login, false = register
 
-        function login() {
-            const username = document.getElementById('username').value.trim();
-            const password = document.getElementById('password').value.trim();
-            const errorEl = document.getElementById('loginError');
+        const loginSection = document.getElementById('loginSection');
+        const dashboardSection = document.getElementById('dashboardSection');
+        const formTitle = document.getElementById('formTitle');
+        const actionBtn = document.getElementById('actionBtn');
+        const toggleLink = document.getElementById('toggleLink');
+        const errorEl = document.getElementById('loginError');
+        const usernameInput = document.getElementById('username');
+        const passwordInput = document.getElementById('password');
 
+        // ----------------------------
+        // Toast helper
+        // ----------------------------
+        function showToast(message, type = 'success') {
+            const toast = document.getElementById('toast');
+            toast.textContent = message;
+            toast.className = 'toast ' + type + ' show';
+            clearTimeout(toast._timeout);
+            toast._timeout = setTimeout(() => toast.classList.remove('show'), 4000);
+        }
+
+        // ----------------------------
+        // Toggle between Login / Register
+        // ----------------------------
+        function toggleForm() {
+            isLogin = !isLogin;
+            if (isLogin) {
+                formTitle.textContent = '🔐 AegisLog Login';
+                actionBtn.textContent = 'Sign In';
+                toggleLink.textContent = "Don't have an account? Register";
+            } else {
+                formTitle.textContent = '📝 Create Account';
+                actionBtn.textContent = 'Register';
+                toggleLink.textContent = 'Already have an account? Login';
+            }
+            errorEl.textContent = '';
+        }
+
+        // ----------------------------
+        // Submit handler (login or register)
+        // ----------------------------
+        function submitForm() {
+            const username = usernameInput.value.trim();
+            const password = passwordInput.value.trim();
             if (!username || !password) {
-                errorEl.textContent = 'Please enter username and password.';
+                errorEl.textContent = 'Please fill in all fields.';
                 return;
             }
+            if (isLogin) {
+                login(username, password);
+            } else {
+                register(username, password);
+            }
+        }
 
+        // ----------------------------
+        // Login
+        // ----------------------------
+        function login(username, password) {
             fetch('/api/login', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -154,41 +210,68 @@
             });
         }
 
+        // ----------------------------
+        // Register
+        // ----------------------------
+        function register(username, password) {
+            if (username.length < 3 || password.length < 6) {
+                errorEl.textContent = 'Username (≥3 chars) and password (≥6 chars) required.';
+                return;
+            }
+
+            fetch('/api/register', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ username, password })
+            })
+            .then(response => {
+                if (!response.ok) {
+                    return response.text().then(text => { throw new Error(text || 'Registration failed'); });
+                }
+                return response.json();
+            })
+            .then(data => {
+                errorEl.textContent = '';
+                showToast('✅ Registration successful! Please login.', 'success');
+                // Switch to login form and pre-fill username
+                isLogin = true;
+                toggleForm();
+                usernameInput.value = username;
+                passwordInput.value = '';
+            })
+            .catch(err => {
+                errorEl.textContent = err.message;
+            });
+        }
+
+        // ----------------------------
+        // Logout
+        // ----------------------------
         function logout() {
             localStorage.removeItem('aegislog_token');
             token = null;
-            document.getElementById('loginSection').style.display = 'flex';
-            document.getElementById('dashboardSection').style.display = 'none';
-            // Reload to reset state
+            loginSection.style.display = 'flex';
+            dashboardSection.style.display = 'none';
             location.reload();
         }
 
+        // ----------------------------
+        // Show Dashboard (start WebSocket, load orders)
+        // ----------------------------
         function showDashboard() {
-            document.getElementById('loginSection').style.display = 'none';
-            document.getElementById('dashboardSection').style.display = 'block';
+            loginSection.style.display = 'none';
+            dashboardSection.style.display = 'block';
             initializeWebSocket();
             loadOrders();
             setInterval(loadOrders, 30000);
         }
 
         // ----------------------------
-        // Toast helper
-        // ----------------------------
-        function showToast(message, type = 'success') {
-            const toast = document.getElementById('toast');
-            toast.textContent = message;
-            toast.className = 'toast ' + type + ' show';
-            clearTimeout(toast._timeout);
-            toast._timeout = setTimeout(() => toast.classList.remove('show'), 4000);
-        }
-
-        // ----------------------------
-        // WebSocket (no auth needed)
+        // WebSocket (alerts, no auth)
         // ----------------------------
         function initializeWebSocket() {
             const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
             const ws = new WebSocket(`${protocol}//${window.location.host}/ws`);
-
             const container = document.getElementById('alertContainer');
 
             ws.onopen = function() {
@@ -200,7 +283,7 @@
                 try {
                     const alert = JSON.parse(event.data);
                     renderAlert(alert);
-                    loadOrders(); // refresh orders in case of auto-reorder
+                    loadOrders(); // refresh orders if auto-reorder triggered
                 } catch (e) {
                     console.error('Failed to parse alert:', e);
                 }
@@ -247,7 +330,7 @@
         }
 
         // ----------------------------
-        // Orders Functions (with JWT)
+        // Orders (with JWT)
         // ----------------------------
         function loadOrders() {
             fetch('/api/orders', {
@@ -337,10 +420,10 @@
         }
 
         // ----------------------------
-        // Initialization
+        // Initialization – check stored token
         // ----------------------------
         if (token) {
-            // Try to load orders with stored token – if fails, show login
+            // Try to load orders with stored token – if unauthorized, show login
             fetch('/api/orders', {
                 headers: { 'Authorization': 'Bearer ' + token }
             })
@@ -356,12 +439,12 @@
             .catch(() => {
                 localStorage.removeItem('aegislog_token');
                 token = null;
-                document.getElementById('loginSection').style.display = 'flex';
-                document.getElementById('dashboardSection').style.display = 'none';
+                loginSection.style.display = 'flex';
+                dashboardSection.style.display = 'none';
             });
         } else {
-            document.getElementById('loginSection').style.display = 'flex';
-            document.getElementById('dashboardSection').style.display = 'none';
+            loginSection.style.display = 'flex';
+            dashboardSection.style.display = 'none';
         }
     </script>
 </body>

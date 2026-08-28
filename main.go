@@ -16,6 +16,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/gorilla/websocket"
 	_ "github.com/jackc/pgx/v5/stdlib"
+	"golang.org/x/crypto/bcrypt"
 )
 
 //go:embed index.html
@@ -28,7 +29,6 @@ var jwtSecret = []byte(os.Getenv("JWT_SECRET"))
 
 func init() {
 	if len(jwtSecret) == 0 {
-		// Fallback for development (should be overridden in production)
 		jwtSecret = []byte("default-dev-secret")
 		log.Println("⚠️  WARNING: Using default JWT_SECRET. Set it in environment for production.")
 	}
@@ -37,96 +37,13 @@ func init() {
 // Claims structure
 type Claims struct {
 	Username string `json:"username"`
+	UserID   int    `json:"user_id"`
+	Role     string `json:"role"`
 	jwt.RegisteredClaims
 }
 
-// Hardcoded credentials (in production, fetch from database)
-const (
-	validUsername = "admin"
-	validPassword = "password123"
-)
-
 // ----------------------------
-// JWT Middleware
-// ----------------------------
-func jwtMiddleware(next http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		authHeader := r.Header.Get("Authorization")
-		if authHeader == "" {
-			http.Error(w, "Authorization header required", http.StatusUnauthorized)
-			return
-		}
-
-		const prefix = "Bearer "
-		if !strings.HasPrefix(authHeader, prefix) {
-			http.Error(w, "Invalid Authorization format", http.StatusUnauthorized)
-			return
-		}
-
-		tokenString := authHeader[len(prefix):]
-		claims := &Claims{}
-		token, err := jwt.ParseWithClaims(tokenString, claims, func(token *jwt.Token) (interface{}, error) {
-			return jwtSecret, nil
-		})
-		if err != nil || !token.Valid {
-			http.Error(w, "Invalid or expired token", http.StatusUnauthorized)
-			return
-		}
-
-		// Optionally store username in context for later use
-		// ctx := context.WithValue(r.Context(), "username", claims.Username)
-		// r = r.WithContext(ctx)
-
-		next(w, r)
-	}
-}
-
-// ----------------------------
-// Login Handler
-// ----------------------------
-func handleLogin(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	var creds struct {
-		Username string `json:"username"`
-		Password string `json:"password"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&creds); err != nil {
-		http.Error(w, "Invalid request body", http.StatusBadRequest)
-		return
-	}
-
-	if creds.Username != validUsername || creds.Password != validPassword {
-		http.Error(w, "Invalid credentials", http.StatusUnauthorized)
-		return
-	}
-
-	// Generate JWT
-	expiration := time.Now().Add(24 * time.Hour)
-	claims := &Claims{
-		Username: creds.Username,
-		RegisteredClaims: jwt.RegisteredClaims{
-			ExpiresAt: jwt.NewNumericDate(expiration),
-			IssuedAt:  jwt.NewNumericDate(time.Now()),
-			Issuer:    "aegislog",
-		},
-	}
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	tokenString, err := token.SignedString(jwtSecret)
-	if err != nil {
-		http.Error(w, "Failed to generate token", http.StatusInternalServerError)
-		return
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"token": tokenString})
-}
-
-// ----------------------------
-// Database setup
+// Database setup (with users table)
 // ----------------------------
 func initDB(db *sql.DB) error {
 	itemsTable := `
@@ -153,7 +70,47 @@ func initDB(db *sql.DB) error {
 		return fmt.Errorf("failed to create orders table: %w", err)
 	}
 
+	usersTable := `
+	CREATE TABLE IF NOT EXISTS users (
+		id SERIAL PRIMARY KEY,
+		username TEXT UNIQUE NOT NULL,
+		password_hash TEXT NOT NULL,
+		role TEXT NOT NULL DEFAULT 'user',
+		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+	);`
+	if _, err := db.Exec(usersTable); err != nil {
+		return fmt.Errorf("failed to create users table: %w", err)
+	}
+
 	fmt.Println("✅ Database tables verified/created.")
+	return nil
+}
+
+// Seed default admin
+func seedAdmin(db *sql.DB) error {
+	var count int
+	err := db.QueryRow("SELECT COUNT(*) FROM users WHERE username = 'admin'").Scan(&count)
+	if err != nil {
+		return err
+	}
+	if count > 0 {
+		fmt.Println("✅ Admin user already exists.")
+		return nil
+	}
+
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte("admin123"), bcrypt.DefaultCost)
+	if err != nil {
+		return fmt.Errorf("failed to hash admin password: %w", err)
+	}
+
+	_, err = db.Exec(
+		"INSERT INTO users (username, password_hash, role) VALUES ($1, $2, $3)",
+		"admin", string(hashedPassword), "admin",
+	)
+	if err != nil {
+		return fmt.Errorf("failed to seed admin: %w", err)
+	}
+	fmt.Println("✅ Admin user created (username: admin, password: admin123)")
 	return nil
 }
 
@@ -180,6 +137,155 @@ func seedItems(db *sql.DB) error {
 	}
 	fmt.Println("✅ Seeded default inventory items.")
 	return nil
+}
+
+// ----------------------------
+// User functions
+// ----------------------------
+func getUserByUsername(db *sql.DB, username string) (id int, passwordHash string, role string, err error) {
+	err = db.QueryRow(
+		"SELECT id, password_hash, role FROM users WHERE username = $1",
+		username,
+	).Scan(&id, &passwordHash, &role)
+	if err == sql.ErrNoRows {
+		return 0, "", "", nil
+	}
+	if err != nil {
+		return 0, "", "", err
+	}
+	return id, passwordHash, role, nil
+}
+
+func createUser(db *sql.DB, username, password string) error {
+	hashed, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		return err
+	}
+	_, err = db.Exec(
+		"INSERT INTO users (username, password_hash) VALUES ($1, $2)",
+		username, string(hashed),
+	)
+	return err
+}
+
+// ----------------------------
+// Handlers
+// ----------------------------
+func handleRegister(db *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		var creds struct {
+			Username string `json:"username"`
+			Password string `json:"password"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&creds); err != nil {
+			http.Error(w, "Invalid request body", http.StatusBadRequest)
+			return
+		}
+		if len(creds.Username) < 3 || len(creds.Password) < 6 {
+			http.Error(w, "Username must be at least 3 chars, password at least 6", http.StatusBadRequest)
+			return
+		}
+
+		err := createUser(db, creds.Username, creds.Password)
+		if err != nil {
+			if strings.Contains(err.Error(), "duplicate key") {
+				http.Error(w, "Username already taken", http.StatusConflict)
+			} else {
+				http.Error(w, "Failed to create user", http.StatusInternalServerError)
+			}
+			return
+		}
+		w.WriteHeader(http.StatusCreated)
+		json.NewEncoder(w).Encode(map[string]string{"message": "User created successfully"})
+	}
+}
+
+func handleLogin(db *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		var creds struct {
+			Username string `json:"username"`
+			Password string `json:"password"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&creds); err != nil {
+			http.Error(w, "Invalid request body", http.StatusBadRequest)
+			return
+		}
+
+		userID, hashedPassword, role, err := getUserByUsername(db, creds.Username)
+		if err != nil {
+			http.Error(w, "Database error", http.StatusInternalServerError)
+			return
+		}
+		if userID == 0 {
+			http.Error(w, "Invalid credentials", http.StatusUnauthorized)
+			return
+		}
+
+		if err := bcrypt.CompareHashAndPassword([]byte(hashedPassword), []byte(creds.Password)); err != nil {
+			http.Error(w, "Invalid credentials", http.StatusUnauthorized)
+			return
+		}
+
+		expiration := time.Now().Add(24 * time.Hour)
+		claims := &Claims{
+			Username: creds.Username,
+			UserID:   userID,
+			Role:     role,
+			RegisteredClaims: jwt.RegisteredClaims{
+				ExpiresAt: jwt.NewNumericDate(expiration),
+				IssuedAt:  jwt.NewNumericDate(time.Now()),
+				Issuer:    "aegislog",
+			},
+		}
+		token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+		tokenString, err := token.SignedString(jwtSecret)
+		if err != nil {
+			http.Error(w, "Failed to generate token", http.StatusInternalServerError)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]string{"token": tokenString})
+	}
+}
+
+// JWT Middleware
+func jwtMiddleware(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		authHeader := r.Header.Get("Authorization")
+		if authHeader == "" {
+			http.Error(w, "Authorization header required", http.StatusUnauthorized)
+			return
+		}
+
+		const prefix = "Bearer "
+		if !strings.HasPrefix(authHeader, prefix) {
+			http.Error(w, "Invalid Authorization format", http.StatusUnauthorized)
+			return
+		}
+
+		tokenString := authHeader[len(prefix):]
+		claims := &Claims{}
+		token, err := jwt.ParseWithClaims(tokenString, claims, func(token *jwt.Token) (interface{}, error) {
+			return jwtSecret, nil
+		})
+		if err != nil || !token.Valid {
+			http.Error(w, "Invalid or expired token", http.StatusUnauthorized)
+			return
+		}
+
+		next(w, r)
+	}
 }
 
 // ----------------------------
@@ -233,12 +339,12 @@ func (inv *InventoryDB) UpdateStock(id string, quantity int, orderChan chan Purc
 		inv.db.QueryRow("SELECT name FROM items WHERE id = $1", id).Scan(&itemName)
 
 		order := PurchaseOrder{
-			ID:         fmt.Sprintf("PO-%d", time.Now().UnixNano()),
-			ItemID:     id,
-			ItemName:   itemName,
-			Quantity:   reorderPoint * 2,
-			Status:     "PENDING",
-			CreatedAt:  time.Now(),
+			ID:        fmt.Sprintf("PO-%d", time.Now().UnixNano()),
+			ItemID:    id,
+			ItemName:  itemName,
+			Quantity:  reorderPoint * 2,
+			Status:    "PENDING",
+			CreatedAt: time.Now(),
 		}
 		select {
 		case orderChan <- order:
@@ -308,12 +414,12 @@ func (inv *InventoryDB) DisplayAllItems() {
 // Procurement Module
 // ----------------------------
 type PurchaseOrder struct {
-	ID         string    `json:"id"`
-	ItemID     string    `json:"item_id"`
-	ItemName   string    `json:"item_name"`
-	Quantity   int       `json:"quantity"`
-	Status     string    `json:"status"`
-	CreatedAt  time.Time `json:"created_at"`
+	ID        string    `json:"id"`
+	ItemID    string    `json:"item_id"`
+	ItemName  string    `json:"item_name"`
+	Quantity  int       `json:"quantity"`
+	Status    string    `json:"status"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 type ProcurementDB struct {
@@ -572,7 +678,7 @@ type ErrorResponse struct {
 	Error string `json:"error"`
 }
 
-// Public GET handlers (no auth)
+// Public GET handlers
 func handleGetItems(inv *InventoryDB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		items, err := inv.GetAllItems()
@@ -716,6 +822,9 @@ func main() {
 	if err := initDB(db); err != nil {
 		log.Fatal("DB initialization failed:", err)
 	}
+	if err := seedAdmin(db); err != nil {
+		log.Fatal("Admin seeding failed:", err)
+	}
 	if err := seedItems(db); err != nil {
 		log.Fatal("Seeding failed:", err)
 	}
@@ -771,13 +880,13 @@ func main() {
 	})
 	http.HandleFunc("/ws", handleWebSocket)
 
-	// Public endpoints (no auth)
+	// Public endpoints (GET + login/register)
 	http.HandleFunc("GET /api/items", handleGetItems(inventory))
 	http.HandleFunc("GET /api/items/{id}", handleGetItem(inventory))
 	http.HandleFunc("GET /api/orders", handleGetOrders(procurement))
 
-	// Login endpoint (public)
-	http.HandleFunc("/api/login", handleLogin)
+	http.HandleFunc("/api/register", handleRegister(db))
+	http.HandleFunc("/api/login", handleLogin(db))
 
 	// Protected POST endpoints (JWT required)
 	http.HandleFunc("POST /api/items/{id}/adjust", jwtMiddleware(handleAdjustStock(inventory, orderChannel)))
@@ -791,6 +900,7 @@ func main() {
 	fmt.Printf("\n🚀 AegisLog Web Server running at http://localhost:%s\n", port)
 	fmt.Println("📲 WebSocket alerts: ws://localhost/ws")
 	fmt.Println("🔒 Protected endpoints require JWT (login via /api/login)")
+	fmt.Println("📝 Registration endpoint: /api/register")
 	fmt.Println("Press Ctrl+C to stop.\n")
 
 	log.Fatal(http.ListenAndServe(":"+port, nil))
