@@ -128,12 +128,12 @@ func (inv *InventoryDB) UpdateStock(id string, quantity int, orderChan chan Purc
 		inv.db.QueryRow("SELECT name FROM items WHERE id = $1", id).Scan(&itemName)
 
 		order := PurchaseOrder{
-			ID:         fmt.Sprintf("PO-%d", time.Now().UnixNano()),
-			ItemID:     id,
-			ItemName:   itemName,
-			Quantity:   reorderPoint * 2,
-			Status:     "PENDING",
-			CreatedAt:  time.Now(),
+			ID:        fmt.Sprintf("PO-%d", time.Now().UnixNano()),
+			ItemID:    id,
+			ItemName:  itemName,
+			Quantity:  reorderPoint * 2,
+			Status:    "PENDING",
+			CreatedAt: time.Now(),
 		}
 		select {
 		case orderChan <- order:
@@ -203,12 +203,12 @@ func (inv *InventoryDB) DisplayAllItems() {
 // Procurement Module
 // ----------------------------
 type PurchaseOrder struct {
-	ID         string    `json:"id"`
-	ItemID     string    `json:"item_id"`
-	ItemName   string    `json:"item_name"`
-	Quantity   int       `json:"quantity"`
-	Status     string    `json:"status"`
-	CreatedAt  time.Time `json:"created_at"`
+	ID        string    `json:"id"`
+	ItemID    string    `json:"item_id"`
+	ItemName  string    `json:"item_name"`
+	Quantity  int       `json:"quantity"`
+	Status    string    `json:"status"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 type ProcurementDB struct {
@@ -588,8 +588,10 @@ func handleReceiveOrder(proc *ProcurementDB) http.HandlerFunc {
 // Main
 // ----------------------------
 func main() {
+	// Seed random for predictive maintenance
 	rand.Seed(time.Now().UnixNano())
 
+	// Database connection
 	connStr := os.Getenv("DATABASE_URL")
 	if connStr == "" {
 		connStr = "postgres://aegis_user:aegis123@localhost:5432/aegislog?sslmode=disable"
@@ -613,11 +615,12 @@ func main() {
 		log.Fatal("Seeding failed:", err)
 	}
 
+	// Create channels and services
 	orderChannel := make(chan PurchaseOrder, 10)
 	procurement := NewProcurementDB(db, orderChannel)
 	inventory := &InventoryDB{db: db}
 
-	// Start maintenance monitors.
+	// Start maintenance monitors
 	alertChannel := make(chan MaintenanceAlert)
 	equipmentList := []Equipment{
 		{ID: "GEN-001", Name: "Diesel Generator", HealthScore: 85},
@@ -636,7 +639,7 @@ func main() {
 	}()
 	go broadcastAlerts()
 
-	// Simulation: consume stock every 8 seconds.
+	// Simulation: consume stock every 8 seconds
 	go func() {
 		ticker := time.NewTicker(8 * time.Second)
 		defer ticker.Stop()
@@ -652,7 +655,7 @@ func main() {
 		}
 	}()
 
-	// HTTP routes.
+	// HTTP routes
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		htmlFile, err := htmlContent.ReadFile("index.html")
 		if err != nil {
@@ -664,17 +667,19 @@ func main() {
 	})
 	http.HandleFunc("/ws", handleWebSocket)
 
-	// Public endpoints (no auth required)
+	// Public API endpoints (no authentication)
 	http.HandleFunc("GET /api/items", handleGetItems(inventory))
 	http.HandleFunc("GET /api/items/{id}", handleGetItem(inventory))
 	http.HandleFunc("POST /api/items/{id}/adjust", handleAdjustStock(inventory, orderChannel))
 	http.HandleFunc("GET /api/orders", handleGetOrders(procurement))
 	http.HandleFunc("POST /api/orders/{id}/receive", handleReceiveOrder(procurement))
 
+	// Port
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8080"
 	}
+
 	fmt.Printf("\n🚀 AegisLog Web Server running at http://localhost:%s\n", port)
 	fmt.Println("📲 WebSocket alerts: ws://localhost/ws")
 	fmt.Println("🔓 All endpoints are public (no authentication)")
@@ -682,4 +687,3 @@ func main() {
 
 	log.Fatal(http.ListenAndServe(":"+port, nil))
 }
-EOF
