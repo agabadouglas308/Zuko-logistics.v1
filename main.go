@@ -13,12 +13,117 @@ import (
 	"sync"
 	"time"
 
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/gorilla/websocket"
 	_ "github.com/jackc/pgx/v5/stdlib"
 )
 
 //go:embed index.html
 var htmlContent embed.FS
+
+// ----------------------------
+// JWT Configuration
+// ----------------------------
+var jwtSecret = []byte(os.Getenv("JWT_SECRET"))
+
+func init() {
+	if len(jwtSecret) == 0 {
+		// Fallback for development (should be overridden in production)
+		jwtSecret = []byte("default-dev-secret")
+		log.Println("⚠️  WARNING: Using default JWT_SECRET. Set it in environment for production.")
+	}
+}
+
+// Claims structure
+type Claims struct {
+	Username string `json:"username"`
+	jwt.RegisteredClaims
+}
+
+// Hardcoded credentials (in production, fetch from database)
+const (
+	validUsername = "admin"
+	validPassword = "password123"
+)
+
+// ----------------------------
+// JWT Middleware
+// ----------------------------
+func jwtMiddleware(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		authHeader := r.Header.Get("Authorization")
+		if authHeader == "" {
+			http.Error(w, "Authorization header required", http.StatusUnauthorized)
+			return
+		}
+
+		const prefix = "Bearer "
+		if !strings.HasPrefix(authHeader, prefix) {
+			http.Error(w, "Invalid Authorization format", http.StatusUnauthorized)
+			return
+		}
+
+		tokenString := authHeader[len(prefix):]
+		claims := &Claims{}
+		token, err := jwt.ParseWithClaims(tokenString, claims, func(token *jwt.Token) (interface{}, error) {
+			return jwtSecret, nil
+		})
+		if err != nil || !token.Valid {
+			http.Error(w, "Invalid or expired token", http.StatusUnauthorized)
+			return
+		}
+
+		// Optionally store username in context for later use
+		// ctx := context.WithValue(r.Context(), "username", claims.Username)
+		// r = r.WithContext(ctx)
+
+		next(w, r)
+	}
+}
+
+// ----------------------------
+// Login Handler
+// ----------------------------
+func handleLogin(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var creds struct {
+		Username string `json:"username"`
+		Password string `json:"password"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&creds); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if creds.Username != validUsername || creds.Password != validPassword {
+		http.Error(w, "Invalid credentials", http.StatusUnauthorized)
+		return
+	}
+
+	// Generate JWT
+	expiration := time.Now().Add(24 * time.Hour)
+	claims := &Claims{
+		Username: creds.Username,
+		RegisteredClaims: jwt.RegisteredClaims{
+			ExpiresAt: jwt.NewNumericDate(expiration),
+			IssuedAt:  jwt.NewNumericDate(time.Now()),
+			Issuer:    "aegislog",
+		},
+	}
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	tokenString, err := token.SignedString(jwtSecret)
+	if err != nil {
+		http.Error(w, "Failed to generate token", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"token": tokenString})
+}
 
 // ----------------------------
 // Database setup
@@ -128,12 +233,12 @@ func (inv *InventoryDB) UpdateStock(id string, quantity int, orderChan chan Purc
 		inv.db.QueryRow("SELECT name FROM items WHERE id = $1", id).Scan(&itemName)
 
 		order := PurchaseOrder{
-			ID:        fmt.Sprintf("PO-%d", time.Now().UnixNano()),
-			ItemID:    id,
-			ItemName:  itemName,
-			Quantity:  reorderPoint * 2,
-			Status:    "PENDING",
-			CreatedAt: time.Now(),
+			ID:         fmt.Sprintf("PO-%d", time.Now().UnixNano()),
+			ItemID:     id,
+			ItemName:   itemName,
+			Quantity:   reorderPoint * 2,
+			Status:     "PENDING",
+			CreatedAt:  time.Now(),
 		}
 		select {
 		case orderChan <- order:
@@ -203,12 +308,12 @@ func (inv *InventoryDB) DisplayAllItems() {
 // Procurement Module
 // ----------------------------
 type PurchaseOrder struct {
-	ID        string    `json:"id"`
-	ItemID    string    `json:"item_id"`
-	ItemName  string    `json:"item_name"`
-	Quantity  int       `json:"quantity"`
-	Status    string    `json:"status"`
-	CreatedAt time.Time `json:"created_at"`
+	ID         string    `json:"id"`
+	ItemID     string    `json:"item_id"`
+	ItemName   string    `json:"item_name"`
+	Quantity   int       `json:"quantity"`
+	Status     string    `json:"status"`
+	CreatedAt  time.Time `json:"created_at"`
 }
 
 type ProcurementDB struct {
@@ -450,7 +555,7 @@ func broadcastAlerts() {
 }
 
 // ----------------------------
-// REST API Handlers (Public)
+// REST API Handlers
 // ----------------------------
 type Item struct {
 	ID           string `json:"id"`
@@ -467,6 +572,7 @@ type ErrorResponse struct {
 	Error string `json:"error"`
 }
 
+// Public GET handlers (no auth)
 func handleGetItems(inv *InventoryDB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		items, err := inv.GetAllItems()
@@ -506,6 +612,20 @@ func handleGetItem(inv *InventoryDB) http.HandlerFunc {
 	}
 }
 
+func handleGetOrders(proc *ProcurementDB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		orders, err := proc.GetRecentOrders(10)
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			json.NewEncoder(w).Encode(ErrorResponse{Error: err.Error()})
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(orders)
+	}
+}
+
+// Protected POST handlers (with JWT)
 func handleAdjustStock(inv *InventoryDB, orderChan chan PurchaseOrder) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
@@ -542,19 +662,6 @@ func handleAdjustStock(inv *InventoryDB, orderChan chan PurchaseOrder) http.Hand
 	}
 }
 
-func handleGetOrders(proc *ProcurementDB) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		orders, err := proc.GetRecentOrders(10)
-		if err != nil {
-			w.WriteHeader(http.StatusInternalServerError)
-			json.NewEncoder(w).Encode(ErrorResponse{Error: err.Error()})
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(orders)
-	}
-}
-
 func handleReceiveOrder(proc *ProcurementDB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
@@ -588,10 +695,8 @@ func handleReceiveOrder(proc *ProcurementDB) http.HandlerFunc {
 // Main
 // ----------------------------
 func main() {
-	// Seed random for predictive maintenance
 	rand.Seed(time.Now().UnixNano())
 
-	// Database connection
 	connStr := os.Getenv("DATABASE_URL")
 	if connStr == "" {
 		connStr = "postgres://aegis_user:aegis123@localhost:5432/aegislog?sslmode=disable"
@@ -615,7 +720,6 @@ func main() {
 		log.Fatal("Seeding failed:", err)
 	}
 
-	// Create channels and services
 	orderChannel := make(chan PurchaseOrder, 10)
 	procurement := NewProcurementDB(db, orderChannel)
 	inventory := &InventoryDB{db: db}
@@ -667,14 +771,18 @@ func main() {
 	})
 	http.HandleFunc("/ws", handleWebSocket)
 
-	// Public API endpoints (no authentication)
+	// Public endpoints (no auth)
 	http.HandleFunc("GET /api/items", handleGetItems(inventory))
 	http.HandleFunc("GET /api/items/{id}", handleGetItem(inventory))
-	http.HandleFunc("POST /api/items/{id}/adjust", handleAdjustStock(inventory, orderChannel))
 	http.HandleFunc("GET /api/orders", handleGetOrders(procurement))
-	http.HandleFunc("POST /api/orders/{id}/receive", handleReceiveOrder(procurement))
 
-	// Port
+	// Login endpoint (public)
+	http.HandleFunc("/api/login", handleLogin)
+
+	// Protected POST endpoints (JWT required)
+	http.HandleFunc("POST /api/items/{id}/adjust", jwtMiddleware(handleAdjustStock(inventory, orderChannel)))
+	http.HandleFunc("POST /api/orders/{id}/receive", jwtMiddleware(handleReceiveOrder(procurement)))
+
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8080"
@@ -682,7 +790,7 @@ func main() {
 
 	fmt.Printf("\n🚀 AegisLog Web Server running at http://localhost:%s\n", port)
 	fmt.Println("📲 WebSocket alerts: ws://localhost/ws")
-	fmt.Println("🔓 All endpoints are public (no authentication)")
+	fmt.Println("🔒 Protected endpoints require JWT (login via /api/login)")
 	fmt.Println("Press Ctrl+C to stop.\n")
 
 	log.Fatal(http.ListenAndServe(":"+port, nil))

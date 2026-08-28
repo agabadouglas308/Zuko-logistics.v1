@@ -6,11 +6,7 @@
     <title>AegisLog - Predictive Maintenance</title>
     <style>
         /* Military-grade high-contrast dark theme */
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
             background-color: #0a0a0a;
             color: #e0e0e0;
@@ -18,6 +14,7 @@
             padding: 20px;
             min-height: 100vh;
         }
+        .container { max-width: 1200px; margin: 0 auto; }
         .header {
             border-bottom: 2px solid #ff6a00;
             padding-bottom: 10px;
@@ -28,354 +25,262 @@
             flex-wrap: wrap;
             gap: 10px;
         }
-        .header h1 {
-            color: #ff6a00;
-            font-size: 28px;
-            letter-spacing: 2px;
-        }
-        .status {
-            color: #4caf50;
-            font-size: 14px;
-            background: #1a1a1a;
-            padding: 6px 14px;
-            border: 1px solid #4caf50;
-            border-radius: 4px;
-        }
-        .section-title {
-            color: #ff6a00;
-            font-size: 20px;
-            margin: 20px 0 10px 0;
-            border-bottom: 1px solid #333;
-            padding-bottom: 5px;
-        }
-        .alert-container {
-            display: flex;
-            flex-direction: column;
-            gap: 10px;
-            max-height: 40vh;
-            overflow-y: auto;
-            padding-right: 10px;
-            margin-bottom: 20px;
-        }
-        .alert-card {
-            background: #141414;
-            border-left: 6px solid #ff6a00;
-            padding: 16px 20px;
-            border-radius: 6px;
-            box-shadow: 0 0 20px rgba(255, 106, 0, 0.05);
-            animation: slideIn 0.3s ease-out;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-        }
-        .alert-card.critical {
-            border-left-color: #ff1744;
-            background: #1a0808;
-        }
-        .alert-card.failed {
-            border-left-color: #ff1744;
-            background: #1a0000;
-            box-shadow: 0 0 30px rgba(255, 23, 68, 0.15);
-        }
-        .alert-card .message {
-            font-size: 18px;
-            font-weight: bold;
-        }
-        .alert-card .meta {
-            font-size: 14px;
-            color: #888;
-            text-align: right;
-        }
-        .alert-card .meta .health {
-            color: #ff6a00;
-            font-weight: bold;
-            font-size: 18px;
-        }
-        @keyframes slideIn {
-            from {
-                opacity: 0;
-                transform: translateX(-20px);
-            }
-            to {
-                opacity: 1;
-                transform: translateX(0);
-            }
-        }
-        .empty-state {
-            color: #555;
-            text-align: center;
-            margin-top: 20px;
-            font-size: 18px;
-        }
-        .orders-container {
-            max-height: 40vh;
-            overflow-y: auto;
-            margin-top: 10px;
-        }
-        .order-table {
-            width: 100%;
-            border-collapse: collapse;
-            font-size: 14px;
-        }
-        .order-table th {
-            text-align: left;
-            padding: 10px 8px;
-            background-color: #1a1a1a;
-            color: #ff6a00;
-            border-bottom: 2px solid #ff6a00;
-            position: sticky;
-            top: 0;
-            z-index: 10;
-        }
-        .order-table td {
-            padding: 10px 8px;
-            border-bottom: 1px solid #222;
-        }
-        .order-table tr:hover {
-            background-color: #141414;
-        }
-        .btn-receive {
-            background-color: #1a4a1a;
-            color: #4caf50;
-            border: 1px solid #4caf50;
-            padding: 5px 15px;
-            border-radius: 4px;
-            cursor: pointer;
-            font-family: inherit;
-            font-size: 13px;
-            transition: all 0.2s;
-        }
-        .btn-receive:hover {
-            background-color: #4caf50;
-            color: #0a0a0a;
-        }
-        .btn-receive:disabled {
-            opacity: 0.4;
-            cursor: not-allowed;
-            background-color: #222;
-            border-color: #555;
-            color: #555;
-        }
-        .btn-receive.loading {
-            background-color: #333;
-            border-color: #888;
-            color: #888;
-            cursor: wait;
-        }
-        .status-badge {
-            padding: 2px 10px;
-            border-radius: 12px;
-            font-size: 12px;
-            font-weight: bold;
-        }
-        .status-badge.approved {
-            color: #4caf50;
-            border: 1px solid #4caf50;
-        }
-        .status-badge.received {
-            color: #888;
-            border: 1px solid #888;
-        }
-        .status-badge.pending {
-            color: #ffa500;
-            border: 1px solid #ffa500;
-        }
-        .footer {
-            margin-top: 30px;
-            border-top: 1px solid #222;
-            padding-top: 15px;
-            font-size: 12px;
-            color: #444;
-            text-align: center;
-        }
-        /* Toast notification */
-        .toast {
-            position: fixed;
-            top: 20px;
-            right: 20px;
-            padding: 14px 24px;
-            border-radius: 6px;
-            font-family: 'Courier New', monospace;
-            font-weight: bold;
-            z-index: 999;
-            box-shadow: 0 4px 20px rgba(0,0,0,0.8);
-            transition: opacity 0.3s ease;
-            opacity: 0;
-        }
-        .toast.success {
-            background-color: #1a4a1a;
-            border-left: 4px solid #4caf50;
-            color: #4caf50;
-        }
-        .toast.error {
-            background-color: #4a1a1a;
-            border-left: 4px solid #ff1744;
-            color: #ff1744;
-        }
-        .toast.show {
-            opacity: 1;
-        }
+        .header h1 { color: #ff6a00; font-size: 28px; letter-spacing: 2px; }
+        .status { color: #4caf50; font-size: 14px; background: #1a1a1a; padding: 6px 14px; border: 1px solid #4caf50; border-radius: 4px; }
+        .section-title { color: #ff6a00; font-size: 20px; margin: 20px 0 10px 0; border-bottom: 1px solid #333; padding-bottom: 5px; }
+        .alert-container { display: flex; flex-direction: column; gap: 10px; max-height: 40vh; overflow-y: auto; padding-right: 10px; margin-bottom: 20px; }
+        .alert-card { background: #141414; border-left: 6px solid #ff6a00; padding: 16px 20px; border-radius: 6px; box-shadow: 0 0 20px rgba(255,106,0,0.05); animation: slideIn 0.3s ease-out; display: flex; justify-content: space-between; align-items: center; }
+        .alert-card.critical { border-left-color: #ff1744; background: #1a0808; }
+        .alert-card.failed { border-left-color: #ff1744; background: #1a0000; box-shadow: 0 0 30px rgba(255,23,68,0.15); }
+        .alert-card .message { font-size: 18px; font-weight: bold; }
+        .alert-card .meta { font-size: 14px; color: #888; text-align: right; }
+        .alert-card .meta .health { color: #ff6a00; font-weight: bold; font-size: 18px; }
+        @keyframes slideIn { from { opacity: 0; transform: translateX(-20px); } to { opacity: 1; transform: translateX(0); } }
+        .empty-state { color: #555; text-align: center; margin-top: 20px; font-size: 18px; }
+        .orders-container { max-height: 40vh; overflow-y: auto; margin-top: 10px; }
+        .order-table { width: 100%; border-collapse: collapse; font-size: 14px; }
+        .order-table th { text-align: left; padding: 10px 8px; background-color: #1a1a1a; color: #ff6a00; border-bottom: 2px solid #ff6a00; position: sticky; top: 0; z-index: 10; }
+        .order-table td { padding: 10px 8px; border-bottom: 1px solid #222; }
+        .order-table tr:hover { background-color: #141414; }
+        .btn-receive { background-color: #1a4a1a; color: #4caf50; border: 1px solid #4caf50; padding: 5px 15px; border-radius: 4px; cursor: pointer; font-family: inherit; font-size: 13px; transition: all 0.2s; }
+        .btn-receive:hover { background-color: #4caf50; color: #0a0a0a; }
+        .btn-receive:disabled { opacity: 0.4; cursor: not-allowed; background-color: #222; border-color: #555; color: #555; }
+        .btn-receive.loading { background-color: #333; border-color: #888; color: #888; cursor: wait; }
+        .status-badge { padding: 2px 10px; border-radius: 12px; font-size: 12px; font-weight: bold; }
+        .status-badge.approved { color: #4caf50; border: 1px solid #4caf50; }
+        .status-badge.received { color: #888; border: 1px solid #888; }
+        .status-badge.pending { color: #ffa500; border: 1px solid #ffa500; }
+        .footer { margin-top: 30px; border-top: 1px solid #222; padding-top: 15px; font-size: 12px; color: #444; text-align: center; }
+        .toast { position: fixed; top: 20px; right: 20px; padding: 14px 24px; border-radius: 6px; font-family: 'Courier New', monospace; font-weight: bold; z-index: 999; box-shadow: 0 4px 20px rgba(0,0,0,0.8); transition: opacity 0.3s ease; opacity: 0; }
+        .toast.success { background-color: #1a4a1a; border-left: 4px solid #4caf50; color: #4caf50; }
+        .toast.error { background-color: #4a1a1a; border-left: 4px solid #ff1744; color: #ff1744; }
+        .toast.show { opacity: 1; }
+
+        /* Login form */
+        #loginSection { display: flex; justify-content: center; align-items: center; min-height: 70vh; }
+        #loginForm { background: #141414; border: 1px solid #333; border-radius: 8px; padding: 30px; max-width: 400px; width: 100%; }
+        #loginForm h2 { color: #ff6a00; margin-bottom: 20px; text-align: center; }
+        #loginForm label { display: block; margin-top: 10px; color: #aaa; }
+        #loginForm input { width: 100%; padding: 10px; background: #0a0a0a; border: 1px solid #333; color: #e0e0e0; border-radius: 4px; margin-top: 5px; font-family: inherit; }
+        #loginForm button { margin-top: 20px; width: 100%; padding: 10px; background-color: #ff6a00; color: #0a0a0a; border: none; border-radius: 4px; font-weight: bold; font-size: 16px; cursor: pointer; }
+        #loginForm button:hover { background-color: #ff8533; }
+        #loginError { color: #ff1744; margin-top: 10px; text-align: center; }
+        .logout-btn { background: none; border: 1px solid #555; color: #888; padding: 4px 12px; border-radius: 4px; cursor: pointer; font-family: inherit; }
+        .logout-btn:hover { color: #ff6a00; border-color: #ff6a00; }
     </style>
 </head>
 <body>
-    <div class="container">
-        <div class="header">
-            <h1>⚙️ AEGISLOG</h1>
-            <div class="status">● LIVE PREDICTIVE MAINTENANCE</div>
+    <div class="container" id="app">
+        <!-- Login Section -->
+        <div id="loginSection">
+            <div id="loginForm">
+                <h2>🔐 AegisLog Login</h2>
+                <label>Username</label>
+                <input type="text" id="username" value="admin">
+                <label>Password</label>
+                <input type="password" id="password" value="password123">
+                <button onclick="login()">Sign In</button>
+                <div id="loginError"></div>
+            </div>
         </div>
 
-        <!-- Alerts Section -->
-        <div class="section-title">🚨 MAINTENANCE ALERTS</div>
-        <div id="alertContainer" class="alert-container">
-            <div class="empty-state">⏳ Waiting for equipment alerts...</div>
-        </div>
+        <!-- Dashboard (hidden until login) -->
+        <div id="dashboardSection" style="display:none;">
+            <div class="header">
+                <h1>⚙️ AEGISLOG</h1>
+                <div>
+                    <span class="status">● LIVE PREDICTIVE MAINTENANCE</span>
+                    <button class="logout-btn" onclick="logout()">Logout</button>
+                </div>
+            </div>
 
-        <!-- Orders Section -->
-        <div class="section-title">📦 PURCHASE ORDERS</div>
-        <div id="ordersContainer" class="orders-container">
-            <div class="empty-state">⏳ Loading orders...</div>
-        </div>
+            <div class="section-title">🚨 MAINTENANCE ALERTS</div>
+            <div id="alertContainer" class="alert-container">
+                <div class="empty-state">⏳ Waiting for equipment alerts...</div>
+            </div>
 
-        <div class="footer">
-            <span>Classified: Military-Grade Logistics | Real-Time Anomaly Detection</span>
+            <div class="section-title">📦 PURCHASE ORDERS</div>
+            <div id="ordersContainer" class="orders-container">
+                <div class="empty-state">⏳ Loading orders...</div>
+            </div>
+
+            <div class="footer">
+                <span>Classified: Military-Grade Logistics | Real-Time Anomaly Detection</span>
+            </div>
         </div>
     </div>
 
-    <!-- Toast container -->
     <div id="toast" class="toast"></div>
 
     <script>
         // ----------------------------
-        // API Key Configuration
+        // JWT Token Management
         // ----------------------------
-        const API_KEY = 'default-dev-key';
+        let token = localStorage.getItem('aegislog_token');
 
-        const container = document.getElementById('alertContainer');
-        const ordersContainer = document.getElementById('ordersContainer');
-        const toastEl = document.getElementById('toast');
+        function login() {
+            const username = document.getElementById('username').value.trim();
+            const password = document.getElementById('password').value.trim();
+            const errorEl = document.getElementById('loginError');
+
+            if (!username || !password) {
+                errorEl.textContent = 'Please enter username and password.';
+                return;
+            }
+
+            fetch('/api/login', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ username, password })
+            })
+            .then(response => {
+                if (!response.ok) {
+                    return response.text().then(text => { throw new Error(text || 'Login failed'); });
+                }
+                return response.json();
+            })
+            .then(data => {
+                if (data.token) {
+                    token = data.token;
+                    localStorage.setItem('aegislog_token', token);
+                    showDashboard();
+                    errorEl.textContent = '';
+                } else {
+                    errorEl.textContent = 'Invalid response from server.';
+                }
+            })
+            .catch(err => {
+                errorEl.textContent = err.message;
+            });
+        }
+
+        function logout() {
+            localStorage.removeItem('aegislog_token');
+            token = null;
+            document.getElementById('loginSection').style.display = 'flex';
+            document.getElementById('dashboardSection').style.display = 'none';
+            // Reload to reset state
+            location.reload();
+        }
+
+        function showDashboard() {
+            document.getElementById('loginSection').style.display = 'none';
+            document.getElementById('dashboardSection').style.display = 'block';
+            initializeWebSocket();
+            loadOrders();
+            setInterval(loadOrders, 30000);
+        }
 
         // ----------------------------
         // Toast helper
         // ----------------------------
         function showToast(message, type = 'success') {
-            toastEl.textContent = message;
-            toastEl.className = 'toast ' + type + ' show';
-            clearTimeout(toastEl._timeout);
-            toastEl._timeout = setTimeout(() => {
-                toastEl.classList.remove('show');
-            }, 4000);
+            const toast = document.getElementById('toast');
+            toast.textContent = message;
+            toast.className = 'toast ' + type + ' show';
+            clearTimeout(toast._timeout);
+            toast._timeout = setTimeout(() => toast.classList.remove('show'), 4000);
         }
 
         // ----------------------------
-        // WebSocket for Alerts
+        // WebSocket (no auth needed)
         // ----------------------------
-        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-        const ws = new WebSocket(`${protocol}//${window.location.host}/ws`);
+        function initializeWebSocket() {
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const ws = new WebSocket(`${protocol}//${window.location.host}/ws`);
 
-        ws.onopen = function() {
-            console.log('WebSocket connected.');
-            container.innerHTML = '';
-        };
+            const container = document.getElementById('alertContainer');
 
-        ws.onmessage = function(event) {
-            try {
-                const alert = JSON.parse(event.data);
-                renderAlert(alert);
-                // Refresh orders when an alert arrives (in case a reorder was triggered).
-                loadOrders();
-            } catch (e) {
-                console.error('Failed to parse alert:', e);
-            }
-        };
+            ws.onopen = function() {
+                console.log('WebSocket connected.');
+                container.innerHTML = '';
+            };
 
-        ws.onerror = function(err) {
-            console.error('WebSocket error:', err);
-            container.innerHTML = `<div style="color:#ff1744; padding:20px; text-align:center;">⚠️ Connection lost to server. Refresh the page.</div>`;
-        };
+            ws.onmessage = function(event) {
+                try {
+                    const alert = JSON.parse(event.data);
+                    renderAlert(alert);
+                    loadOrders(); // refresh orders in case of auto-reorder
+                } catch (e) {
+                    console.error('Failed to parse alert:', e);
+                }
+            };
 
-        ws.onclose = function() {
-            console.log('WebSocket closed.');
-        };
+            ws.onerror = function(err) {
+                console.error('WebSocket error:', err);
+                container.innerHTML = `<div style="color:#ff1744; padding:20px; text-align:center;">⚠️ Connection lost to server. Refresh the page.</div>`;
+            };
 
-        function renderAlert(alert) {
-            const emptyState = container.querySelector('.empty-state');
-            if (emptyState) emptyState.remove();
+            ws.onclose = function() {
+                console.log('WebSocket closed.');
+            };
 
-            const card = document.createElement('div');
-            card.className = 'alert-card';
+            function renderAlert(alert) {
+                const emptyState = container.querySelector('.empty-state');
+                if (emptyState) emptyState.remove();
 
-            if (alert.message.includes('FAILED')) {
-                card.classList.add('failed');
-            } else if (alert.health_score <= 20) {
-                card.classList.add('critical');
-            }
+                const card = document.createElement('div');
+                card.className = 'alert-card';
+                if (alert.message.includes('FAILED')) card.classList.add('failed');
+                else if (alert.health_score <= 20) card.classList.add('critical');
 
-            const msgDiv = document.createElement('div');
-            msgDiv.className = 'message';
-            msgDiv.textContent = alert.message;
+                const msgDiv = document.createElement('div');
+                msgDiv.className = 'message';
+                msgDiv.textContent = alert.message;
 
-            const metaDiv = document.createElement('div');
-            metaDiv.className = 'meta';
-            metaDiv.innerHTML = `
-                <div>${alert.equipment_name}</div>
-                <div class="health">Health: ${alert.health_score}</div>
-                <div style="font-size:12px;color:#666;">${alert.timestamp}</div>
-            `;
+                const metaDiv = document.createElement('div');
+                metaDiv.className = 'meta';
+                metaDiv.innerHTML = `
+                    <div>${alert.equipment_name}</div>
+                    <div class="health">Health: ${alert.health_score}</div>
+                    <div style="font-size:12px;color:#666;">${alert.timestamp}</div>
+                `;
 
-            card.appendChild(msgDiv);
-            card.appendChild(metaDiv);
-            container.prepend(card);
+                card.appendChild(msgDiv);
+                card.appendChild(metaDiv);
+                container.prepend(card);
 
-            while (container.children.length > 50) {
-                container.removeChild(container.lastChild);
+                while (container.children.length > 50) {
+                    container.removeChild(container.lastChild);
+                }
             }
         }
 
         // ----------------------------
-        // Orders Functions (with API key)
+        // Orders Functions (with JWT)
         // ----------------------------
         function loadOrders() {
-            fetch('/api/orders')
-                .then(response => response.json())
-                .then(orders => {
-                    renderOrders(orders);
-                })
-                .catch(err => {
-                    console.error('Failed to load orders:', err);
-                    ordersContainer.innerHTML = `<div class="empty-state">❌ Failed to load orders.</div>`;
-                });
+            fetch('/api/orders', {
+                headers: { 'Authorization': 'Bearer ' + token }
+            })
+            .then(response => response.json())
+            .then(orders => renderOrders(orders))
+            .catch(err => {
+                console.error('Failed to load orders:', err);
+                document.getElementById('ordersContainer').innerHTML = `<div class="empty-state">❌ Failed to load orders.</div>`;
+            });
         }
 
         function renderOrders(orders) {
+            const container = document.getElementById('ordersContainer');
             if (!orders || orders.length === 0) {
-                ordersContainer.innerHTML = `<div class="empty-state">📭 No purchase orders found.</div>`;
+                container.innerHTML = `<div class="empty-state">📭 No purchase orders found.</div>`;
                 return;
             }
 
             let html = `
                 <table class="order-table">
                     <thead>
-                        <tr>
-                            <th>Order ID</th>
-                            <th>Item</th>
-                            <th>Quantity</th>
-                            <th>Status</th>
-                            <th>Action</th>
-                        </tr>
+                        <tr><th>Order ID</th><th>Item</th><th>Quantity</th><th>Status</th><th>Action</th></tr>
                     </thead>
                     <tbody>
             `;
 
             orders.forEach(order => {
                 const isReceived = order.status === 'RECEIVED';
-                const isPending = order.status === 'PENDING';
                 const isApproved = order.status === 'APPROVED';
+                let statusClass = isReceived ? 'received' : (isApproved ? 'approved' : 'pending');
 
-                let statusClass = 'pending';
-                if (isReceived) statusClass = 'received';
-                if (isApproved) statusClass = 'approved';
-
-                // Determine action cell content
                 let actionHtml = '';
                 if (isApproved) {
                     actionHtml = `<button class="btn-receive" onclick="receiveOrder('${order.id}')">📥 Receive</button>`;
@@ -397,25 +302,18 @@
             });
 
             html += `</tbody></table>`;
-            ordersContainer.innerHTML = html;
+            container.innerHTML = html;
         }
 
         function receiveOrder(orderId) {
-            // Find the button and disable it, show loading state
             const buttons = document.querySelectorAll('.btn-receive');
-            buttons.forEach(btn => btn.disabled = true);
-            // Find the specific button for this order and add loading class
-            const targetBtn = Array.from(buttons).find(btn => btn.textContent.includes('Receive') && btn.onclick.toString().includes(orderId));
-            if (targetBtn) {
-                targetBtn.classList.add('loading');
-                targetBtn.textContent = '⏳ Processing...';
-            }
+            buttons.forEach(btn => { btn.disabled = true; btn.classList.add('loading'); btn.textContent = '⏳ Processing...'; });
 
             fetch(`/api/orders/${orderId}/receive`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
-                    'X-API-Key': API_KEY
+                    'Authorization': 'Bearer ' + token
                 }
             })
             .then(response => {
@@ -427,29 +325,44 @@
             .then(data => {
                 console.log('Order received:', data);
                 showToast('✅ Order received successfully! Stock updated.', 'success');
-                loadOrders(); // Refresh the orders table
+                loadOrders();
             })
             .catch(err => {
                 console.error('Failed to receive order:', err);
                 showToast('❌ Failed to receive order: ' + err.message, 'error');
                 // Re-enable buttons on error
                 const btns = document.querySelectorAll('.btn-receive');
-                btns.forEach(btn => {
-                    btn.disabled = false;
-                    btn.classList.remove('loading');
-                    if (btn.textContent.includes('Processing')) {
-                        btn.textContent = '📥 Receive';
-                    }
-                });
+                btns.forEach(btn => { btn.disabled = false; btn.classList.remove('loading'); btn.textContent = '📥 Receive'; });
             });
         }
 
         // ----------------------------
-        // Initial Load
+        // Initialization
         // ----------------------------
-        loadOrders();
-        // Refresh orders every 30 seconds
-        setInterval(loadOrders, 30000);
+        if (token) {
+            // Try to load orders with stored token – if fails, show login
+            fetch('/api/orders', {
+                headers: { 'Authorization': 'Bearer ' + token }
+            })
+            .then(response => {
+                if (response.status === 401) {
+                    throw new Error('Unauthorized');
+                }
+                return response.json();
+            })
+            .then(() => {
+                showDashboard();
+            })
+            .catch(() => {
+                localStorage.removeItem('aegislog_token');
+                token = null;
+                document.getElementById('loginSection').style.display = 'flex';
+                document.getElementById('dashboardSection').style.display = 'none';
+            });
+        } else {
+            document.getElementById('loginSection').style.display = 'flex';
+            document.getElementById('dashboardSection').style.display = 'none';
+        }
     </script>
 </body>
 </html>
